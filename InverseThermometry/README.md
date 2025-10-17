@@ -110,4 +110,4 @@ $$ τ ≤ h²/(4σ_max) $$
 
 ## Next Steps
 
-This solver is ready for Part 2 of the project: using it in an inverse problem to estimate thermal conductivity from temperature measurements.
+This solver is for Part 1 of the project: using it in an inverse problem to estimate thermal conductivity from temperature measurements.
