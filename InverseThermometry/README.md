@@ -87,21 +87,19 @@ The test suite includes:
 ## Mathematical Details
 
 ### Heat Equation
-```
-∂u/∂t = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y) + f(x,y,t)
-```
+
+$$ ∂u/∂t = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y) + f(x,y,t)$$
+
 
 ### Discretization Scheme
-```
-(u_{ij}^{k+1} - u_{ij}^k)/τ + 
+$$ (u_{ij}^{k+1} - u_{ij}^k)/τ + 
 [σ_{i+½,j}(u_{ij}^k - u_{i+1,j}^k) + σ_{i-½,j}(u_{ij}^k - u_{i-1,j}^k)]/h² +
-[σ_{i,j+½}(u_{ij}^k - u_{ij+1}^k) + σ_{i,j-½}(u_{ij}^k - u_{ij-1}^k)]/h² = f_{ij}^k
-```
+[σ_{i,j+½}(u_{ij}^k - u_{ij+1}^k) + σ_{i,j-½}(u_{ij}^k - u_{ij-1}^k)]/h² = f_{ij}^k $$
 
 ### Stability Condition
-```
-τ ≤ h²/(4σ_max)
-```
+
+$$ τ ≤ h²/(4σ_max) $$
+
 
 ## Expected Results
 
