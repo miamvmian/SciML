@@ -150,7 +150,7 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     
     # 3D surface plot
     ax2 = fig.add_subplot(122, projection='3d')
-    surf = ax2.plot_surface(x, y, u, cmap='viridis', alpha=0.8)
+    ax2.plot_surface(x, y, u, cmap='viridis', alpha=0.8)
     ax2.set_xlabel('x')
     ax2.set_ylabel('y')
     ax2.set_zlabel('Temperature')
@@ -244,7 +244,7 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
     
     Args:
         M: grid size
-        pattern: 'constant', 'linear', 'gaussian', 'checkerboard'
+        pattern: 'constant', 'linear', 'sigmoid'
         device: device to create tensor on
     
     Returns:
@@ -259,10 +259,8 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
         sigma = torch.ones(M, M, device=device)
     elif pattern == 'linear':
         sigma = 1 + X + Y
-    elif pattern == 'gaussian':
-        sigma = 1 + 0.5 * torch.exp(-((X - 0.5)**2 + (Y - 0.5)**2) / 0.1)
-    elif pattern == 'checkerboard':
-        sigma = 1 + 0.5 * torch.sin(4 * np.pi * X) * torch.sin(4 * np.pi * Y)
+    elif pattern == 'sigmoid':
+        sigma = 1 + torch.sigmoid((X - 0.5)**2 + (Y - 0.5)**2)
     else:
         raise ValueError(f"Unknown pattern: {pattern}")
     

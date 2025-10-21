@@ -22,7 +22,7 @@ def test_solver_accuracy():
     print("=" * 50)
     
     # Test parameters
-    M = 10  # Grid size
+    M = 50  # Grid size
     T = 1.0  # Total time
     device = 'cpu'
     
