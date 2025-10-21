@@ -8,6 +8,42 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
+def _apply_neumann_bc(u):
+    """
+    Apply Neumann boundary conditions (zero gradient at boundaries).
+    Uses ghost cells approach with symmetric extension.
+    
+    Args:
+        u: temperature field [M, M]
+    
+    Returns:
+        u with boundary conditions applied [M+2, M+2]
+    """
+    M = u.shape[0]
+    u_bc = torch.zeros(M + 2, M + 2, dtype=u.dtype, device=u.device)
+    
+    # Interior points
+    u_bc[1:-1, 1:-1] = u
+    
+    # Neumann BC: ∂u/∂n = 0
+    # Left boundary: u[0, :] = u[1, :]
+    u_bc[0, 1:-1] = u[0, :]
+    # Right boundary: u[-1, :] = u[-2, :]
+    u_bc[-1, 1:-1] = u[-1, :]
+    # Bottom boundary: u[:, 0] = u[:, 1]
+    u_bc[1:-1, 0] = u[:, 0]
+    # Top boundary: u[:, -1] = u[:, -2]
+    u_bc[1:-1, -1] = u[:, -1]
+    
+    # Corner points (average of adjacent boundaries)
+    u_bc[0, 0] = (u_bc[0, 1] + u_bc[1, 0]) / 2
+    u_bc[0, -1] = (u_bc[0, -2] + u_bc[1, -1]) / 2
+    u_bc[-1, 0] = (u_bc[-1, 1] + u_bc[-2, 0]) / 2
+    u_bc[-1, -1] = (u_bc[-1, -2] + u_bc[-2, -1]) / 2
+    
+    return u_bc
+
+
 def verification_solution(x, y, t):
     """
     Analytical solution for verification test case.

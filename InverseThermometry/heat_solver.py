@@ -31,45 +31,10 @@ def harmonic_average(sigma, axis):
         return 2 / (1/sigma_bottom + 1/sigma_top)
 
 
-def _apply_neumann_bc(u):
-    """
-    Apply Neumann boundary conditions (zero gradient at boundaries).
-    Uses ghost cells approach with symmetric extension.
-    
-    Args:
-        u: temperature field [M, M]
-    
-    Returns:
-        u with boundary conditions applied [M+2, M+2]
-    """
-    M = u.shape[0]
-    u_bc = torch.zeros(M + 2, M + 2, dtype=u.dtype, device=u.device)
-    
-    # Interior points
-    u_bc[1:-1, 1:-1] = u
-    
-    # Neumann BC: ∂u/∂n = 0
-    # Left boundary: u[0, :] = u[1, :]
-    u_bc[0, 1:-1] = u[0, :]
-    # Right boundary: u[-1, :] = u[-2, :]
-    u_bc[-1, 1:-1] = u[-1, :]
-    # Bottom boundary: u[:, 0] = u[:, 1]
-    u_bc[1:-1, 0] = u[:, 0]
-    # Top boundary: u[:, -1] = u[:, -2]
-    u_bc[1:-1, -1] = u[:, -1]
-    
-    # Corner points (average of adjacent boundaries)
-    u_bc[0, 0] = (u_bc[0, 1] + u_bc[1, 0]) / 2
-    u_bc[0, -1] = (u_bc[0, -2] + u_bc[1, -1]) / 2
-    u_bc[-1, 0] = (u_bc[-1, 1] + u_bc[-2, 0]) / 2
-    u_bc[-1, -1] = (u_bc[-1, -2] + u_bc[-2, -1]) / 2
-    
-    return u_bc
-
-
 def heat_step(u, sigma, f, h, tau):
     """
-    Single time step of the heat equation using finite difference method.
+    Single explicit Euler step with interface-averaged conductivity (finite-volume form).
+    Uses harmonic averages at cell faces and zero normal flux at domain boundaries.
     
     Args:
         u: temperature field [M, M]
@@ -81,50 +46,29 @@ def heat_step(u, sigma, f, h, tau):
     Returns:
         updated temperature field [M, M]
     """
-    M = u.shape[0]
-    
-    # Apply boundary conditions with ghost cells
-    u_bc = _apply_neumann_bc(u)  # [M+2, M+2]
-    
-    # Initialize updated temperature
-    u_new = u.clone()
-    
-    # Use finite difference method: ∂u/∂t = ∇·(σ∇u) + f
-    # ∇·(σ∇u) = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y)
-    
-    for i in range(M):
-        for j in range(M):
-            # X-direction: ∂/∂x(σ ∂u/∂x)
-            # Central difference for ∂u/∂x at cell centers
-            if i == 0:  # Left boundary
-                du_dx_right = (u_bc[i+2, j+1] - u_bc[i+1, j+1]) / h
-                du_dx_left = 0  # Neumann BC: ∂u/∂x = 0
-            elif i == M-1:  # Right boundary
-                du_dx_right = 0  # Neumann BC: ∂u/∂x = 0
-                du_dx_left = (u_bc[i+1, j+1] - u_bc[i, j+1]) / h
-            else:  # Interior
-                du_dx_right = (u_bc[i+2, j+1] - u_bc[i+1, j+1]) / h
-                du_dx_left = (u_bc[i+1, j+1] - u_bc[i, j+1]) / h
-            
-            # Y-direction: ∂/∂y(σ ∂u/∂y)
-            if j == 0:  # Bottom boundary
-                du_dy_top = (u_bc[i+1, j+2] - u_bc[i+1, j+1]) / h
-                du_dy_bottom = 0  # Neumann BC: ∂u/∂y = 0
-            elif j == M-1:  # Top boundary
-                du_dy_top = 0  # Neumann BC: ∂u/∂y = 0
-                du_dy_bottom = (u_bc[i+1, j+1] - u_bc[i+1, j]) / h
-            else:  # Interior
-                du_dy_top = (u_bc[i+1, j+2] - u_bc[i+1, j+1]) / h
-                du_dy_bottom = (u_bc[i+1, j+1] - u_bc[i+1, j]) / h
-            
-            # Compute divergence: ∇·(σ∇u) = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y)
-            div_sigma_grad_u = (sigma[i, j] * du_dx_right - sigma[i, j] * du_dx_left) / h + \
-                              (sigma[i, j] * du_dy_top - sigma[i, j] * du_dy_bottom) / h
-            
-            # Update temperature: ∂u/∂t = ∇·(σ∇u) + f
-            u_new[i, j] = u[i, j] + tau * (div_sigma_grad_u + f[i, j])
-    
-    return u_new
+    # Conductivity at interfaces via harmonic average
+    sigma_x = harmonic_average(sigma, axis=0)  # [M-1, M] between i and i+1 at fixed j
+    sigma_y = harmonic_average(sigma, axis=1)  # [M, M-1] between j and j+1 at fixed i
+
+    # Differences of u across interfaces (centered jumps)
+    du_x = u[1:, :] - u[:-1, :]              # [M-1, M]
+    du_y = u[:, 1:] - u[:, :-1]              # [M, M-1]
+
+    # Physical fluxes at interfaces: q = -σ ∂u/∂n
+    flux_x = -sigma_x * (du_x / h)           # [M-1, M]
+    flux_y = -sigma_y * (du_y / h)           # [M, M-1]
+
+    # Neumann BC (zero normal flux): pad interface flux arrays with zeros at boundaries
+    flux_x_pad = torch.zeros(u.shape[0] + 1, u.shape[1], dtype=u.dtype, device=u.device)
+    flux_x_pad[1:-1, :] = flux_x
+    div_x = (flux_x_pad[1:, :] - flux_x_pad[:-1, :]) / h  # [M, M]
+
+    flux_y_pad = torch.zeros(u.shape[0], u.shape[1] + 1, dtype=u.dtype, device=u.device)
+    flux_y_pad[:, 1:-1] = flux_y
+    div_y = (flux_y_pad[:, 1:] - flux_y_pad[:, :-1]) / h  # [M, M]
+
+    # Explicit Euler update
+    return u + tau * (div_x + div_y + f)
 
 
 def compute_stable_timestep(sigma, h):
