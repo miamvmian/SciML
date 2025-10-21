@@ -4,10 +4,10 @@ from inverse_solver import InverseSolver
 from utils import (create_source_function, create_conductivity_field)
 
 
-def get_boundary_conditions(sigma, heat_source, T, device='cpu'):
+def get_boundary_conditions(sigma, heat_source, T, max_sigma, device='cpu'):
     M = sigma.shape[0]
     solver = HeatSolver(sigma, M, heat_source, device)
-    u_final, u_b_history = solver(T=1.0)
+    _, u_b_history = solver(T, max_sigma)
     return u_b_history
 
 def main():
@@ -15,7 +15,7 @@ def main():
     M = 10
     T = 1.0
     device = 'cpu'
-    n_steps = None  # Auto-compute
+    max_sigma = 10
     alpha = 0.1
     sigma_0 = 1.0  # Initial guess
     lr = 1e-1
@@ -24,10 +24,10 @@ def main():
     tol = 1e-4
     pattern = 'constant'
     source_func = create_source_function(pattern=pattern, device=device)
-    sigma_gt = create_conductivity_field(2 * M, pattern=pattern, value=1.0, device=device)
+    sigma_gt = create_conductivity_field(M, pattern=pattern, device=device)
 
     # Generate boundary observations with noise
-    u_b_gt = get_boundary_conditions(sigma_gt, source_func, T, device=device)
+    u_b_gt = get_boundary_conditions(sigma_gt, source_func, T, max_sigma, device=device)
     u_b = (1 + noise_level * torch.randn_like(u_b_gt)) * u_b_gt
 
     # Inverse solver
@@ -35,8 +35,7 @@ def main():
         M=M,
         u_b=u_b,
         source_func=source_func,
-        T=T,
-        n_steps=n_steps,
+        n_steps=u_b.shape[0] - 1,
         alpha=alpha,
         sigma_0=sigma_0,
         device=device

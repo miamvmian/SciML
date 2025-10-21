@@ -207,7 +207,6 @@ def compute_stable_timestep(sigma, h):
         maximum stable time step
     """
     sigma_max = torch.max(sigma)
-    # Use more conservative time step for stability
     tau_max = h**2 / (8 * sigma_max)  # More conservative than h^2/(4*sigma)
     return tau_max
 
@@ -237,7 +236,7 @@ class HeatSolver(nn.Module):
         self.mask[idx, :] = True
         self.mask[:, idx] = True
 
-    def forward(self, T, n_steps=None, print_info=False):
+    def forward(self, T, n_steps=None, max_sigma=None, print_info=False):
         """
         Solve the 2D heat equation using finite volume method.
         
@@ -264,24 +263,25 @@ class HeatSolver(nn.Module):
         # Compute stable time step
         tau_max = compute_stable_timestep(self.sigma, self.h)
         
-        if n_steps is None:
-            # Use 90% of maximum stable time step
-            self.tau = 0.9 * tau_max
+        if n_steps is None and max_sigma is None:
+            self.tau = tau_max
             n_steps = int(T / self.tau) + 1
             if print_info:
                 print(f"N time steps {n_steps}")
             self.tau = T / n_steps
-        else:
+        elif n_steps is not None:
             self.tau = T / n_steps
             if self.tau > tau_max:
                 print(f"Warning: Time step {self.tau:.6f} exceeds stability limit {tau_max:.6f}")
-        
+        elif max_sigma is not None:
+            self.tau = self.h**2 / (8 * max_sigma)
+            n_steps = int(T / self.tau) + 1
+
         if print_info:
             print(f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}")
         
         # Store solution history
-        u_b_history = torch.zeros(n_steps + 1, 4*(self.M - 1), device=self.device)
-
+        u_b_history = torch.zeros((n_steps + 1, 4*(self.M - 1)), device=self.device)
 
         u_b_history[0] = u[self.mask].clone()
         

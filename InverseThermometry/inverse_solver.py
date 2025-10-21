@@ -47,7 +47,7 @@ class InverseSolver:
         total_loss_history = []
         for i in tqdm(range(max_iters)):
             _, u_b_history = self.solver(self.T, self.n_steps, **kwargs)
-
+            
             loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
             loss_reg = self.solver.h**2 * (self.solver.sigma - self.sigma_0).square().sum()
             loss = loss_data + self.alpha * loss_reg
