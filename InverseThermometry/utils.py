@@ -157,7 +157,8 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     ax2.set_title(f'{title} - 3D Surface')
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"solution_{title}.png")
+    plt.close()
 
 
 def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Comparison"):
@@ -209,7 +210,8 @@ def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Compar
     axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"comparison_{title}.png")
+    plt.close()
 
 
 def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
@@ -234,8 +236,10 @@ def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
     plt.ylabel('L2 Error')
     plt.title(title)
     plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
+    plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.savefig(f"convergence_{title}.png")
+    plt.close()
 
 
 def create_conductivity_field(M, pattern='constant', device='cpu'):
