@@ -5,6 +5,7 @@ Implements finite volume method with explicit Euler time-stepping
 
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 
 
 def harmonic_average(sigma, axis):
@@ -118,6 +119,9 @@ def heat_step(u, sigma, f, h, tau):
                 du_dy_bottom = (u_bc[i+1, j+1] - u_bc[i+1, j]) / h
             
             # Compute divergence: ∇·(σ∇u) = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y)
+            # harmoic_sigma_x = harmonic_average(sigma, axis=0)
+            # harmoic_sigma_y = harmonic_average(sigma, axis=0)
+
             div_sigma_grad_u = (sigma[i, j] * du_dx_right - sigma[i, j] * du_dx_left) / h + \
                               (sigma[i, j] * du_dy_top - sigma[i, j] * du_dy_bottom) / h
             
@@ -144,92 +148,83 @@ def compute_stable_timestep(sigma, h):
     return tau_max
 
 
-def solve_heat_equation(sigma, source_func, M, T, n_steps=None, device='cpu'):
-    """
-    Solve the 2D heat equation using finite volume method.
-    
-    Args:
-        sigma: conductivity field [M, M] with requires_grad=True
-        source_func: function f(x, y, t) that returns source term
-        M: number of grid cells per direction
-        T: total time
-        n_steps: number of time steps (auto-computed if None)
-        device: device to run computation on
-    
-    Returns:
-        u_final: final temperature field [M, M]
-        u_history: temperature field at each time step [n_steps+1, M, M]
-    """
-    # Grid setup
-    h = 1.0 / M
-    x = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2  # Cell centers
-    y = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
-    
-    # Create coordinate grids
-    X, Y = torch.meshgrid(x, y, indexing='ij')
-    
-    # Initialize temperature field
-    u = torch.zeros(M, M, device=device, dtype=torch.float32)
-    
-    # Compute stable time step
-    tau_max = compute_stable_timestep(sigma, h)
-    
-    if n_steps is None:
-        # Use 90% of maximum stable time step
-        tau = 0.9 * tau_max
-        n_steps = int(T / tau) + 1
-        tau = T / n_steps
-    else:
-        tau = T / n_steps
-        if tau > tau_max:
-            print(f"Warning: Time step {tau:.6f} exceeds stability limit {tau_max:.6f}")
-    
-    print(f"Grid: {M}x{M}, Time step: {tau:.6f}, Steps: {n_steps}")
-    
-    # Store solution history
-    u_history = torch.zeros(n_steps + 1, M, M, device=device)
-    u_history[0] = u.clone()
-    
-    # Time stepping
-    for k in range(n_steps):
-        t = k * tau
-        
-        # Compute source term at current time
-        f = source_func(X, Y, t)
-        
-        # Single time step
-        u = heat_step(u, sigma, f, h, tau)
-        
-        # Store solution
-        u_history[k + 1] = u.clone()
-    
-    return u, u_history
-
-
 class HeatSolver(nn.Module):
     """
     PyTorch module for differentiable heat equation solver.
     """
-    
-    def __init__(self, M, device='cpu'):
+
+    def __init__(self, sigma_0, M, source_func, device='cpu'):
         super().__init__()
         self.M = M
         self.device = device
+
+        if isinstance(sigma_0, (int, float)):
+            sigma = torch.full((M, M), fill_value=sigma_0, dtype=torch.float32, device=device)
+        elif isinstance(sigma_0, torch.Tensor):
+            sigma = sigma_0.clone().to(device)
+        self.sigma = nn.Parameter(sigma, requires_grad=True)
+
+        self.source_func = source_func
+
+        self.tau = None
         
-    def forward(self, sigma, source_func, T, n_steps=None):
+    def forward(self, T, n_steps=None, print_info=False):
         """
-        Forward pass of the heat solver.
+        Solve the 2D heat equation using finite volume method.
         
         Args:
-            sigma: conductivity field [M, M]
-            source_func: function f(x, y, t) that returns source term
             T: total time
-            n_steps: number of time steps
+            n_steps: number of time steps (auto-computed if None)
+            device: device to run computation on
         
         Returns:
-            u_final: final temperature field [M, M]
+            u: final temperature field [M, M]
+            u_history: temperature field at each time step [n_steps+1, M, M]
         """
-        u_final, _ = solve_heat_equation(
-            sigma, source_func, self.M, T, n_steps, self.device
-        )
-        return u_final
+        # Grid setup
+        self.h = 1.0 / self.M
+        x = torch.linspace(0, 1, self.M+1, device=self.device)[:-1] + self.h/2  # Cell centers
+        y = torch.linspace(0, 1, self.M+1, device=self.device)[:-1] + self.h/2
+        
+        # Create coordinate grids
+        X, Y = torch.meshgrid(x, y, indexing='ij')
+        
+        # Initialize temperature field
+        u = torch.zeros(self.M, self.M, device=self.device, dtype=torch.float32)
+        
+        # Compute stable time step
+        tau_max = compute_stable_timestep(self.sigma, self.h)
+        
+        if n_steps is None:
+            # Use 90% of maximum stable time step
+            self.tau = 0.9 * tau_max
+            n_steps = int(T / self.tau) + 1
+            if print_info:
+                print(f"N time steps {n_steps}")
+            self.tau = T / n_steps
+        else:
+            self.tau = T / n_steps
+            if self.tau > tau_max:
+                print(f"Warning: Time step {self.tau:.6f} exceeds stability limit {tau_max:.6f}")
+        
+        if print_info:
+            print(f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}")
+        
+        # Store solution history
+        u_history = torch.zeros(n_steps + 1, self.M, self.M, device=self.device)
+        u_history[0] = u.clone()
+        
+        # Time stepping
+        for k in range(n_steps):
+            t = k * self.tau
+            
+            # Compute source term at current time
+            f = self.source_func(X, Y, t)
+            
+            # Single time step
+            u = heat_step(u, self.sigma, f, self.h, self.tau)
+            
+            # Store solution
+            u_history[k + 1] = u.clone()
+        
+        return u, u_history

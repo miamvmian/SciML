@@ -8,6 +8,37 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
+def create_conductivity_field(M, pattern='constant', device='cpu'):
+    """
+    Create different conductivity field patterns for testing.
+    
+    Args:
+        M: grid size
+        pattern: 'constant', 'linear', 'gaussian', 'checkerboard'
+        device: device to create tensor on
+    
+    Returns:
+        conductivity field [M, M]
+    """
+    h = 1.0 / M
+    x = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
+    y = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
+    X, Y = torch.meshgrid(x, y, indexing='ij')
+    
+    if pattern == 'constant':
+        sigma = torch.ones(M, M, device=device)
+    elif pattern == 'linear':
+        sigma = 1 + X + Y
+    elif pattern == 'gaussian':
+        sigma = 1 + 0.5 * torch.exp(-((X - 0.5)**2 + (Y - 0.5)**2) / 0.1)
+    elif pattern == 'checkerboard':
+        sigma = 1 + 0.5 * torch.sin(4 * np.pi * X) * torch.sin(4 * np.pi * Y)
+    else:
+        raise ValueError(f"Unknown pattern: {pattern}")
+    
+    return sigma
+    
+
 def verification_solution(x, y, t):
     """
     Analytical solution for verification test case.
@@ -200,37 +231,6 @@ def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.show()
-
-
-def create_conductivity_field(M, pattern='constant', device='cpu'):
-    """
-    Create different conductivity field patterns for testing.
-    
-    Args:
-        M: grid size
-        pattern: 'constant', 'linear', 'gaussian', 'checkerboard'
-        device: device to create tensor on
-    
-    Returns:
-        conductivity field [M, M]
-    """
-    h = 1.0 / M
-    x = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
-    y = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
-    X, Y = torch.meshgrid(x, y, indexing='ij')
-    
-    if pattern == 'constant':
-        sigma = torch.ones(M, M, device=device)
-    elif pattern == 'linear':
-        sigma = 1 + X + Y
-    elif pattern == 'gaussian':
-        sigma = 1 + 0.5 * torch.exp(-((X - 0.5)**2 + (Y - 0.5)**2) / 0.1)
-    elif pattern == 'checkerboard':
-        sigma = 1 + 0.5 * torch.sin(4 * np.pi * X) * torch.sin(4 * np.pi * Y)
-    else:
-        raise ValueError(f"Unknown pattern: {pattern}")
-    
-    return sigma
 
 
 def print_solver_info(M, T, tau, n_steps, sigma_max):
