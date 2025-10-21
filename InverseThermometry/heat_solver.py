@@ -6,6 +6,7 @@ Implements finite volume method with explicit Euler time-stepping
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+from typing import Optional, Literal
 
 
 def harmonic_average(sigma, axis):
@@ -70,8 +71,8 @@ def _apply_neumann_bc(u):
 
 def heat_step(u, sigma, f, h, tau):
     """
-    Single time step of the heat equation using finite difference method.
-    
+    Legacy function: Single time step of the heat equation using finite difference method.
+
     Args:
         u: temperature field [M, M]
         sigma: conductivity field [M, M]
@@ -131,6 +132,69 @@ def heat_step(u, sigma, f, h, tau):
     return u_new
 
 
+def harmonic_mean(a, b, eps=1e-12):
+    return 2.0 * a * b / (a + b + eps)
+
+
+def fv_euler_step_neumann(
+    u: torch.Tensor,          # [B,H,W]  u^k
+    sigma: torch.Tensor,      # [B,H,W]
+    f: torch.Tensor,          # [B,H,W]  source at t_k
+    h: float,
+    tau: float,
+):
+    """
+    One explicit Euler FV step for ∂_t u + div(σ∇u) = f with Neumann BCs.
+    """
+    assert u.shape == sigma.shape == f.shape and u.ndim in [2,3], "Input tensors must have the same shape [B,H,W] or [H,W]"
+    eps = 1e-12
+
+    # neighbors (interior via rolls)
+    uR = torch.roll(u, -1, dims=-1)  # right  (j+1)
+    uL = torch.roll(u, +1, dims=-1)  # left   (j-1)
+    uU = torch.roll(u, -1, dims=-2)  # up     (i+1)
+    uD = torch.roll(u, +1, dims=-2)  # down   (i-1)
+
+    sR = torch.roll(sigma, -1, dims=-1)
+    sL = torch.roll(sigma, +1, dims=-1)
+    sU = torch.roll(sigma, -1, dims=-2)
+    sD = torch.roll(sigma, +1, dims=-2)
+
+    # face sigmas (interior harmonic means)
+    s_iphalf_j = harmonic_mean(sigma, sU, eps)
+    s_imhalf_j = harmonic_mean(sigma, sD, eps)
+    s_ijphalf  = harmonic_mean(sigma, sR, eps)
+    s_ijmhalf  = harmonic_mean(sigma, sL, eps)
+
+    # ---------- Boundary corrections (replace neighbor diffs on the domain boundary) ----------
+    # Start with interior diffs
+    dR = (u - uR)       # (i,j) - (i,j+1)
+    dL = (u - uL)       # (i,j) - (i,j-1)
+    dU = (u - uU)       # (i,j) - (i+1,j)
+    dD = (u - uD)       # (i,j) - (i-1,j)
+
+    # Defaults = homogeneous Neumann (mirror): diffs at boundary -> 0
+    dL[..., :, 0]  = 0.0   # left edge
+    dR[..., :, -1] = 0.0   # right edge
+    dD[..., 0, :]  = 0.0   # bottom edge
+    dU[..., -1, :] = 0.0   # top edge
+
+    # For boundary faces, use σ_face = cell value (harmonic with itself)
+    s_iphalf_j[..., -1, :] = sigma[..., -1, :]
+    s_imhalf_j[...,  0, :] = sigma[...,  0, :]
+    s_ijphalf[..., :, -1]  = sigma[..., :, -1]
+    s_ijmhalf[..., :,  0]  = sigma[..., :,  0]
+
+    # FV sum
+    S = (
+        s_iphalf_j * dU + s_imhalf_j * dD +
+        s_ijphalf  * dR + s_ijmhalf  * dL
+    )
+
+    u_next = u + tau * (f - S / (h*h))
+    return u_next
+
+
 def compute_stable_timestep(sigma, h):
     """
     Compute stable time step for explicit Euler scheme.
@@ -167,7 +231,12 @@ class HeatSolver(nn.Module):
         self.source_func = source_func
 
         self.tau = None
-        
+
+        idx = torch.tensor([0, -1], device=self.device)
+        self.mask = torch.zeros((self.M, self.M), dtype=torch.bool, device=self.device)
+        self.mask[idx, :] = True
+        self.mask[:, idx] = True
+
     def forward(self, T, n_steps=None, print_info=False):
         """
         Solve the 2D heat equation using finite volume method.
@@ -179,7 +248,7 @@ class HeatSolver(nn.Module):
         
         Returns:
             u: final temperature field [M, M]
-            u_history: temperature field at each time step [n_steps+1, M, M]
+            u_b_history: temperature field at each time step [n_steps+1, 4*(M-1)]
         """
         # Grid setup
         self.h = 1.0 / self.M
@@ -211,8 +280,10 @@ class HeatSolver(nn.Module):
             print(f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}")
         
         # Store solution history
-        u_history = torch.zeros(n_steps + 1, self.M, self.M, device=self.device)
-        u_history[0] = u.clone()
+        u_b_history = torch.zeros(n_steps + 1, 4*(self.M - 1), device=self.device)
+
+
+        u_b_history[0] = u[self.mask].clone()
         
         # Time stepping
         for k in range(n_steps):
@@ -222,9 +293,30 @@ class HeatSolver(nn.Module):
             f = self.source_func(X, Y, t)
             
             # Single time step
-            u = heat_step(u, self.sigma, f, self.h, self.tau)
+            u = fv_euler_step_neumann(u, self.sigma, f, self.h, self.tau)
             
             # Store solution
-            u_history[k + 1] = u.clone()
-        
-        return u, u_history
+            u_b_history[k + 1] = u[self.mask].clone()
+
+        return u, u_b_history
+
+
+def solve_heat_equation(sigma, verification_source, M, T, device='cpu'):
+    """
+    Solve the heat equation for verification test case.
+    
+    Args:
+        sigma: conductivity field [M, M]
+        verification_source: source term function
+        M: grid size
+        T: total time
+        device: device to run computation on
+    Returns:
+        u_final: final temperature field [M, M]
+        u_b_history: temperature field at each time step [n_steps+1, M, M]
+    """
+
+    solver = HeatSolver(sigma, M, verification_source, device)
+    u_final, u_b_history = solver(T=T, print_info=True)
+    return u_final, u_b_history
+    

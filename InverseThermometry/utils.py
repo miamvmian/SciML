@@ -37,6 +37,35 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
         raise ValueError(f"Unknown pattern: {pattern}")
     
     return sigma
+
+def create_source_function(pattern='constant', device='cpu'):
+    """
+    Create different source term functions for testing.
+    
+    Args:
+        pattern: 'constant', 'sinusoidal', 'localized'
+        device: device to create tensors on
+    
+    Returns:
+        source function f(x,y,t)
+    """
+    def constant_source(x, y, t):
+        return torch.ones_like(x, device=device)
+    
+    def sinusoidal_source(x, y, t):
+        return torch.sin(np.pi * x) * torch.sin(np.pi * y) * torch.exp(-t)
+    
+    def localized_source(x, y, t):
+        return torch.exp(-((x - 0.5)**2 + (y - 0.5)**2) / 0.02) * torch.sin(np.pi * t)
+    
+    if pattern == 'constant':
+        return constant_source
+    elif pattern == 'sinusoidal':
+        return sinusoidal_source
+    elif pattern == 'localized':
+        return localized_source
+    else:
+        raise ValueError(f"Unknown pattern: {pattern}")
     
 
 def verification_solution(x, y, t):

@@ -14,7 +14,7 @@ class InverseSolver:
     def __init__(
         self,
         M,
-        u_b,
+        u_b_gt,
         source_func,
         T=1,
         n_steps=None,
@@ -23,8 +23,8 @@ class InverseSolver:
         device='cpu'
     ):
         self.M = M
-        self.u_b = u_b
-        self.u_b.requires_grad_(False)
+        self.u_b_gt = u_b_gt
+        self.u_b_gt.requires_grad_(False)
 
         self.T = T
         self.n_steps = n_steps
@@ -42,20 +42,13 @@ class InverseSolver:
     
     def solve(self, lr=1e-3, max_iters=10000, tol=1e-3, **kwargs):
         
-        loss_history = []
-
-        # idx is for boundary points with ghost cells discarded
-        idx = torch.tensor([0, -1], device=self.device)
-        mask = torch.zeros((self.M, self.M), dtype=torch.bool, device=self.device)
-        mask[idx, :] = True
-        mask[:, idx] = True
-
         optimizer = torch.optim.Adam(self.solver.parameters(), lr=lr)
-
+        
+        loss_history = []
         for i in tqdm(range(max_iters)):
-            _, u = self.solver(self.T, self.n_steps, **kwargs)
+            _, u_b_history = self.solver(self.T, self.n_steps, **kwargs)
 
-            loss_data = self.solver.h * self.solver.tau * (u[:, mask] - self.u_b).square().sum()
+            loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
             loss_reg = self.solver.h**2 * (self.solver.sigma - self.sigma_0).square().sum()
             loss = loss_data + self.alpha * loss_reg
 
