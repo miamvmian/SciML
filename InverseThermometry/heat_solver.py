@@ -215,12 +215,6 @@ class HeatSolver(nn.Module):
         super().__init__()
         self.M = M
         self.device = device
-        self.h = 1.0 / M
-        
-        # Create coordinate grids
-        x = torch.linspace(0, 1, M+1, device=device)[:-1] + self.h/2
-        y = torch.linspace(0, 1, M+1, device=device)[:-1] + self.h/2
-        self.X, self.Y = torch.meshgrid(x, y, indexing='ij')
         
     def forward(self, sigma, source_func, T, n_steps=None):
         """
