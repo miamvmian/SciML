@@ -9,7 +9,6 @@ from tqdm import tqdm
 from heat_solver import HeatSolver
 
 
-
 class InverseSolver:
     def __init__(
         self,
@@ -41,10 +40,11 @@ class InverseSolver:
 
     
     def solve(self, lr=1e-3, max_iters=10000, tol=1e-3, **kwargs):
-        
         optimizer = torch.optim.Adam(self.solver.parameters(), lr=lr)
-        
-        loss_history = []
+    
+        boundary_loss_history = []
+        regularization_loss_history = []
+        total_loss_history = []
         for i in tqdm(range(max_iters)):
             _, u_b_history = self.solver(self.T, self.n_steps, **kwargs)
 
@@ -56,7 +56,9 @@ class InverseSolver:
             loss.backward()
             optimizer.step()
 
-            loss_history.append(loss.item())
+            boundary_loss_history.append(loss_data.item())
+            regularization_loss_history.append(loss_reg.item())
+            total_loss_history.append(loss.item())
 
             if loss.item() < tol:
                 print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
@@ -66,7 +68,7 @@ class InverseSolver:
     
         sigma_est = self.solver.sigma.detach().cpu().numpy()
 
-        return sigma_est, loss_history
+        return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
 
 
 

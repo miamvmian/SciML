@@ -7,16 +7,8 @@ from utils import (create_source_function, create_conductivity_field)
 def get_boundary_conditions(sigma, heat_source, T, device='cpu'):
     M = sigma.shape[0]
     solver = HeatSolver(sigma, M, heat_source, device)
-
-    u_final, u_history = solver(T=1.0)
-
-    idx = torch.tensor([0, -1])
-    mask = torch.zeros((M, M), dtype=torch.bool)
-    mask[idx, :] = True
-    mask[:, idx] = True
-
-    u_b = u_history[:, mask]
-    return u_b
+    u_final, u_b_history = solver(T=1.0)
+    return u_b_history
 
 def main():
     # === Params ===

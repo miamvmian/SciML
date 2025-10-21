@@ -213,7 +213,7 @@ def test_heat_solver_module():
     sigma.requires_grad_(True)
     
     # Forward pass
-    u_final = solver(sigma, verification_source, T)
+    u_final, _ = solver(sigma, verification_source, T)
     
     print(f"Output shape: {u_final.shape}")
     print(f"Output range: [{torch.min(u_final):.6f}, {torch.max(u_final):.6f}]")
