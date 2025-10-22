@@ -7,7 +7,7 @@ from utils import (create_source_function, create_conductivity_field)
 def get_boundary_conditions(sigma, heat_source, T, max_sigma, device='cpu'):
     M = sigma.shape[0]
     solver = HeatSolver(M, heat_source, device)
-    _, u_b_history = solver(sigma, T, max_sigma=max_sigma)
+    _, u_b_history, _ = solver(sigma, T, max_sigma=max_sigma)
     return u_b_history
 
 def main():

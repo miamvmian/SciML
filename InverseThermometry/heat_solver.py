@@ -11,21 +11,84 @@ from typing import Optional, Literal
 from utils import _boundary_mask
 
 
+def harmonic_average(sigma, axis):
+    """
+    Compute harmonic average at cell interfaces.
+    
+    Args:
+        sigma: conductivity field [M, M]
+        axis: 0 for x-direction, 1 for y-direction
+    
+    Returns:
+        harmonic average at interfaces [M-1, M] or [M, M-1]
+    """
+    if axis == 0:  # X-direction
+        # Compute σ_{i+½,j} = 2/(1/σ_{i,j} + 1/σ_{i+1,j})
+        sigma_left = sigma[:-1, :]   # σ_{i,j}
+        sigma_right = sigma[1:, :]   # σ_{i+1,j}
+        return 2 / (1/sigma_left + 1/sigma_right)
+    
+    elif axis == 1:  # Y-direction
+        # Compute σ_{i,j+½} = 2/(1/σ_{i,j} + 1/σ_{i,j+1})
+        sigma_bottom = sigma[:, :-1]  # σ_{i,j}
+        sigma_top = sigma[:, 1:]      # σ_{i,j+1}
+        return 2 / (1/sigma_bottom + 1/sigma_top)
+
+
+def heat_step(u, sigma, f, h, tau):
+    """
+    Single explicit Euler step with interface-averaged conductivity (finite-volume form).
+    Uses harmonic averages at cell faces and zero normal flux at domain boundaries.
+    
+    Args:
+        u: temperature field [M, M]
+        sigma: conductivity field [M, M]
+        f: source term [M, M]
+        h: grid spacing
+        tau: time step
+    
+    Returns:
+        updated temperature field [M, M]
+    """
+    # Conductivity at interfaces via harmonic average
+    sigma_x = harmonic_average(sigma, axis=0)  # [M-1, M] between i and i+1 at fixed j
+    sigma_y = harmonic_average(sigma, axis=1)  # [M, M-1] between j and j+1 at fixed i
+
+    # Differences of u across interfaces (centered jumps)
+    du_x = u[1:, :] - u[:-1, :]              # [M-1, M]
+    du_y = u[:, 1:] - u[:, :-1]              # [M, M-1]
+
+    # Physical fluxes at interfaces: define q = +σ ∂u/∂n so that div(q) = ∇·(σ∇u)
+    flux_x = sigma_x * (du_x / h)            # [M-1, M]
+    flux_y = sigma_y * (du_y / h)            # [M, M-1]
+
+    # Neumann BC (zero normal flux): pad interface flux arrays with zeros at boundaries
+    flux_x_pad = torch.zeros(u.shape[0] + 1, u.shape[1], dtype=u.dtype, device=u.device)
+    flux_x_pad[1:-1, :] = flux_x
+    div_x = (flux_x_pad[1:, :] - flux_x_pad[:-1, :]) / h  # [M, M]
+
+    flux_y_pad = torch.zeros(u.shape[0], u.shape[1] + 1, dtype=u.dtype, device=u.device)
+    flux_y_pad[:, 1:-1] = flux_y
+    div_y = (flux_y_pad[:, 1:] - flux_y_pad[:, :-1]) / h  # [M, M]
+
+    # Explicit Euler update
+    return u + tau * (div_x + div_y + f)
+
+
 def harmonic_mean(a, b, eps=1e-12):
     return 2.0 * a * b / (a + b + eps)
 
 
 def fv_euler_step_neumann(
-    u: torch.Tensor,          # [B,H,W]  u^k
-    sigma: torch.Tensor,      # [B,H,W]
-    f: torch.Tensor,          # [B,H,W]  source at t_k
+    u: torch.Tensor,          
+    sigma: torch.Tensor,      
+    f: torch.Tensor,
     h: float,
     tau: float,
 ):
     """
     One explicit Euler FV step for ∂_t u + div(σ∇u) = f with Neumann BCs.
     """
-    assert u.shape == sigma.shape == f.shape and u.ndim in [2,3], "Input tensors must have the same shape [B,H,W] or [H,W]"
     eps = 1e-12
 
     # neighbors (interior via rolls)
@@ -142,6 +205,7 @@ class HeatSolver(nn.Module):
         elif max_sigma is not None:
             self.tau = self.h**2 / (8 * max_sigma)
             n_steps = int(T / self.tau) + 1
+            self.tau = T / n_steps
 
         if print_info:
             print(f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}")
@@ -161,7 +225,7 @@ class HeatSolver(nn.Module):
             f = self.source_func(X, Y, t)
             
             # Single time step
-            u = fv_euler_step_neumann(u, sigma, f, self.h, self.tau)
+            u = heat_step(u, sigma, f, self.h, self.tau)
             
             # Store solution
             u_history[k+1] = u.clone()

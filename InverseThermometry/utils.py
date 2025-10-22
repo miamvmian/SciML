@@ -77,7 +77,26 @@ def sine_source(x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega
         return torch.sin(omega * torch.tensor([t])) * torch.ones_like(x, device=x.device)
     else:
         return torch.sin(omega * t.unsqueeze(-1).unsqueeze(-1)) * torch.ones_like(x, device=x.device)
-    
+
+def sine_gauss_source(x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float):
+    if isinstance(t, (int, float)):
+        return torch.sin(omega * torch.tensor([t])).abs() * torch.exp(-0.5 * ((x - 0.5)**2 + (y - 0.5)**2) * 6)
+    else:
+        return torch.sin(omega * t.unsqueeze(-1).unsqueeze(-1)).abs() * torch.exp(-0.5 * ((x - 0.5)**2 - (y - 0.5)**2) * 6)
+
+
+def sine_sine_source(x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float):
+    if isinstance(t, (int, float)):
+        return (torch.sin(omega * torch.tensor([t])) + 1) * (torch.sin(2 * omega * x) * torch.sin(2 * omega * y) + 1)
+    else:
+        return (torch.sin(omega * t.unsqueeze(-1).unsqueeze(-1)) + 1) * (torch.sin(2 * omega * x) * torch.sin(2 * omega * y) + 1)
+
+
+def sine_cosine_source(x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float):
+    if isinstance(t, (int, float)):
+        return (torch.sin(omega * torch.tensor([t])) + 1) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
+    else:
+        return (torch.sin(omega * t.unsqueeze(-1).unsqueeze(-1)) + 1) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
 
 
 def create_source_function(pattern='constant', device='cpu'):
