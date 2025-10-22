@@ -12,49 +12,54 @@ from heat_solver import HeatSolver
 class InverseSolver:
     def __init__(
         self,
-        M,
+        sigma_module,
         u_b_gt,
         source_func,
-        T=1,
+        M,
+        T=None,
         n_steps=None,
+        lr=1e-3,
         alpha=0.1,
         sigma_0=1,
         device='cpu'
     ):
-        self.M = M
         self.u_b_gt = u_b_gt
         self.u_b_gt.requires_grad_(False)
 
+        self.M = M
         self.T = T
         self.n_steps = n_steps
 
         self.alpha = alpha
         self.sigma_0 = sigma_0
-
+        self.ls = lr
         self.device = device
 
-        self.solver = HeatSolver(self.sigma_0, self.M, source_func, self.device)
+        self.solver = HeatSolver(self.M, source_func, self.device)
+
+        self.sigma_module = sigma_module
+        self.optimizer = torch.optim.Adam(sigma_module.parameters(), lr=lr)
 
         if isinstance(sigma_0, torch.Tensor):
             sigma_0.requires_grad_(False)
 
     
-    def solve(self, lr=1e-3, max_iters=10000, tol=1e-3, **kwargs):
-        optimizer = torch.optim.Adam(self.solver.parameters(), lr=lr)
-    
+    def solve(self, max_iters=10000, tol=1e-3, **kwargs):
         boundary_loss_history = []
         regularization_loss_history = []
         total_loss_history = []
         for i in tqdm(range(max_iters)):
-            _, u_b_history = self.solver(self.T, self.n_steps, **kwargs)
+            sigma = self.sigma_module()
+            print(self.T, self.n_steps)
+            _, u_b_history = self.solver(sigma, self.T, self.n_steps, **kwargs)
             
             loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
-            loss_reg = self.solver.h**2 * (self.solver.sigma - self.sigma_0).square().sum()
+            loss_reg = self.solver.h**2 * (sigma - self.sigma_0).square().sum()
             loss = loss_data + self.alpha * loss_reg
 
-            optimizer.zero_grad()
+            self.optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+            self.optimizer.step()
 
             boundary_loss_history.append(loss_data.item())
             regularization_loss_history.append(loss_reg.item())
@@ -65,8 +70,8 @@ class InverseSolver:
                 break
             
             print(f"Iter {i}: Loss = {loss.item():.6f}")
-    
-        sigma_est = self.solver.sigma.detach().cpu().numpy()
+
+        sigma_est = self.sigma_module().detach().cpu().numpy()
 
         return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
 

@@ -8,6 +8,33 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
+def _boundary_mask(M, device):
+    # Boundary indicator with True at the domain boundary
+    # Order matters for downstream stacking/slicing consistency.
+    mask = torch.zeros(M, M, dtype=torch.bool, device=device)
+    mask[0, :] = mask[-1, :] = mask[:, 0] = mask[:, -1] = True
+    return mask
+
+
+class SimpleSigma(torch.nn.Module):
+    def __init__(self, M, sigma_0):
+        super().__init__()
+        self.sigma = torch.nn.Parameter(torch.randn(M, M) * 0.1 + sigma_0, requires_grad=True)
+
+    def forward(self):
+        return self.sigma
+
+class SigmoidSigma(torch.nn.Module):
+    def __init__(self, M, min_sigma, max_sigma):
+        super().__init__()
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+        self.sigma_param = torch.nn.Parameter(torch.rand(M, M))
+
+    def forward(self):
+        return torch.sigmoid(self.sigma_param) * (self.max_sigma - self.min_sigma) + self.min_sigma
+        
+
 def create_conductivity_field(M, pattern='constant', device='cpu'):
     """
     Create different conductivity field patterns for testing.
@@ -37,6 +64,15 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
         raise ValueError(f"Unknown pattern: {pattern}")
     
     return sigma
+
+
+def sine_source(x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float):
+    if isinstance(t, (int, float)):
+        return torch.sin(omega * torch.tensor([t])) * torch.ones_like(x, device=x.device)
+    else:
+        return torch.sin(omega * t.unsqueeze(-1).unsqueeze(-1)) * torch.ones_like(x, device=x.device)
+    
+
 
 def create_source_function(pattern='constant', device='cpu'):
     """
