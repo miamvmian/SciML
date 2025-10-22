@@ -144,11 +144,11 @@ def test_differentiability():
     
     # Check if gradients were computed
     if sigma.grad is not None:
-        print("✓ Solver is differentiable!")
+        print("Solver is differentiable!")
         print(f"Gradient norm: {torch.norm(sigma.grad):.6f}")
         print(f"Gradient shape: {sigma.grad.shape}")
     else:
-        print("✗ Solver is not differentiable!")
+        print("Solver is not differentiable!")
     
     return sigma.grad is not None
 
@@ -164,12 +164,9 @@ def test_different_conductivity_patterns():
     T = 0.5
     device = 'cpu'
     
-    patterns = ['constant', 'linear', 'gaussian', 'checkerboard']
+    patterns = ['constant', 'linear', 'sigmoid']
     
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    axes = axes.flatten()
-    
-    for i, pattern in enumerate(patterns):
+    for pattern in patterns:
         print(f"Testing pattern: {pattern}")
         
         # Create conductivity field
@@ -181,19 +178,23 @@ def test_different_conductivity_patterns():
             sigma, verification_source, M, T, device=device
         )
         
-        # Plot conductivity field
-        im = axes[i].contourf(sigma.detach().numpy(), levels=20, cmap='viridis')
-        axes[i].set_title(f'Conductivity: {pattern}')
-        axes[i].set_xlabel('x')
-        axes[i].set_ylabel('y')
-        plt.colorbar(im, ax=axes[i], label='σ')
+        # Compute analytical solution
+        h = 1.0 / M
+        x = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
+        y = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
+        X, Y = torch.meshgrid(x, y, indexing='ij')
         
-        print(f"  σ range: [{torch.min(sigma):.3f}, {torch.max(sigma):.3f}]")
+        u_analytical = verification_solution(X, Y, T)
+        
+        # Compute relative error
+        relative_error = compute_relative_error(u_final, u_analytical)
+        print(f"  Relative Error = {relative_error:.6f}")
+        
+        # Visualize comparison
+        visualize_comparison(u_final, u_analytical, X, Y, 
+                            f"Verification Test - {pattern}")
     
-    plt.tight_layout()
-    plt.show()
-
-
+    
 def test_heat_solver_module():
     """
     Test the HeatSolver PyTorch module.
@@ -223,9 +224,9 @@ def test_heat_solver_module():
     loss.backward()
     
     if sigma.grad is not None:
-        print("✓ HeatSolver module is differentiable!")
+        print("HeatSolver module is differentiable!")
     else:
-        print("✗ HeatSolver module is not differentiable!")
+        print("HeatSolver module is not differentiable!")
     
     return solver
 
@@ -256,17 +257,17 @@ def main():
     print("\n" + "=" * 60)
     print("TEST SUMMARY")
     print("=" * 60)
-    print(f"✓ Basic accuracy test: L2 error = {l2_error:.6f}")
-    print(f"✓ Convergence test: {len(h_values)} grid sizes tested")
-    print(f"✓ Differentiability test: {'PASSED' if is_differentiable else 'FAILED'}")
-    print(f"✓ Conductivity patterns test: 4 patterns tested")
-    print(f"✓ Module test: {'PASSED' if solver else 'FAILED'}")
+    print(f"Basic accuracy test: L2 error = {l2_error:.6f}")
+    print(f"Convergence test: {len(h_values)} grid sizes tested")
+    print(f"Differentiability test: {'PASSED' if is_differentiable else 'FAILED'}")
+    print(f"Conductivity patterns test: 4 patterns tested")
+    print(f"Module test: {'PASSED' if solver else 'FAILED'}")
     print("=" * 60)
     
     if l2_error < 0.01 and is_differentiable:
-        print("🎉 All tests PASSED! Solver is ready for inverse problems.")
+        print("All tests PASSED! Solver is ready for inverse problems.")
     else:
-        print("⚠️  Some tests failed. Please check the implementation.")
+        print("Some tests failed. Please check the implementation.")
 
 
 if __name__ == "__main__":

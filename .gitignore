@@ -1,10 +1,4 @@
-__pycache__/
-*.py[cod]
-*.class
-.env
-.venv
-build/
-dist/
-*.egg-info/
-.ipynb_checkpoints/
+/*           # ignore everything at the repo root
+!/.gitignore # keep this file
+!/InverseThermometry/  # track this folder
 .DS_Store
