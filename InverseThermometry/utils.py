@@ -21,7 +21,7 @@ def r2_score(pred, real):
     return (1.0 - mse / var).item()
 
 
-def _boundary_mask(M, device):
+def boundary_mask(M, device):
     # Boundary indicator with True at the domain boundary
     # Order matters for downstream stacking/slicing consistency.
     mask = torch.zeros(M, M, dtype=torch.bool, device=device)
@@ -444,42 +444,57 @@ def print_solver_info(M, T, tau, n_steps, sigma_max):
     print("=" * 50)
 
 
-def compare(u_history, u_gt_history, source_func, tau):
-    M = u_history.shape[1]
+def precompute_source_history(source_func, M, n_frames, tau, device):
     h = 1.0 / M
-    x = (
-        torch.linspace(0, 1, M + 1, device=u_history.device)[:-1] + h / 2
-    )  # Cell centers
-    y = torch.linspace(0, 1, M + 1, device=u_history.device)[:-1] + h / 2
+    x = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2  # Cell centers
+    y = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2
 
     # Create coordinate grids
     X, Y = torch.meshgrid(x, y, indexing="ij")
 
-    n_frames = u_history.shape[0]
-    ts = torch.arange(n_frames, device=u_history.device) * tau
+    ts = torch.arange(n_frames, device=device) * tau
 
     with torch.no_grad():
         source_history = torch.stack([source_func(X, Y, t) for t in ts], dim=0)
 
-    u_sim_np = u_history.detach().cpu().numpy()
+    return source_history
 
+
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from IPython.display import HTML, display
+
+
+def compare(u_history, u_gt_history, source_history, tau):
+    # --- Downscale time dimension to 100 evenly spaced slices ---
+    n_frames = u_history.shape[0]
+    if n_frames > 100:
+        idx = torch.linspace(0, n_frames - 1, 100).long()
+        u_history = u_history[idx]
+        u_gt_history = u_gt_history[idx]
+        source_history = source_history[idx]
+    n_frames = u_history.shape[0]
+
+    # --- Time axis ---
+    ts = torch.arange(n_frames, device=u_history.device) * tau
+
+    # --- Convert to NumPy ---
+    u_sim_np = u_history.detach().cpu().numpy()
     u_gt_np = u_gt_history.detach().cpu().numpy()
     residual_np = (u_history - u_gt_history).detach().cpu().numpy()
     source_np = source_history.detach().cpu().numpy()
     times_np = ts.detach().cpu().numpy()
 
+    # --- Value limits ---
     vmin = float(min(u_sim_np.min(), u_gt_np.min()))
     vmax = float(max(u_sim_np.max(), u_gt_np.max()))
-    res_lim = float(np.max(np.abs(residual_np)))
-    if res_lim == 0.0:
-        res_lim = 1e-12
-
-    source_lim = float(np.max(np.abs(source_np)))
-    if source_lim == 0.0:
-        source_lim = 1e-12
-
+    res_lim = float(np.max(np.abs(residual_np))) or 1e-12
+    source_lim = float(np.max(np.abs(source_np))) or 1e-12
     extent = [0.0, 1.0, 0.0, 1.0]
 
+    # --- Figure setup ---
     fig, axes = plt.subplots(1, 4, figsize=(24, 5))
 
     im_sim = axes[0].imshow(
@@ -526,6 +541,7 @@ def compare(u_history, u_gt_history, source_func, tau):
 
     time_text = fig.suptitle(f"t = {times_np[0]:.3f}")
 
+    # --- Animation update ---
     def _update(frame):
         im_sim.set_data(u_sim_np[frame])
         im_gt.set_data(u_gt_np[frame])

@@ -8,7 +8,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import Optional, Literal
 
-from utils import _boundary_mask
+from utils import boundary_mask, precompute_source_history
 
 
 def harmonic_average(sigma, axis):
@@ -73,6 +73,10 @@ def heat_step(u, sigma, f, h, tau):
 
     # Explicit Euler update
     return u + tau * (div_x + div_y + f)
+
+
+def heat_steps(u, sigma, fs, h, tau):
+    return torch.stack([heat_step(u, sigma, f, h, tau) for f in fs], dim=0)
 
 
 def harmonic_mean(a, b, eps=1e-12):
@@ -146,7 +150,7 @@ def compute_stable_timestep(sigma, h):
         maximum stable time step
     """
     sigma_max = torch.max(sigma)
-    tau_max = h**2 / (8 * sigma_max)  # More conservative than h^2/(4*sigma)
+    tau_max = h**2 / (4 * sigma_max)  # More conservative than h^2/(4*sigma)
     return tau_max
 
 
@@ -161,7 +165,7 @@ class HeatSolver(nn.Module):
         self.device = device
         self.source_func = source_func
         self.tau = None
-        self.mask = _boundary_mask(self.M, self.device)
+        self.mask = boundary_mask(self.M, self.device)
 
     def forward(self, sigma, T, n_steps=None, max_sigma=None, print_info=False):
         """
