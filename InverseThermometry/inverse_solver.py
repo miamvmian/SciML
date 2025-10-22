@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+from utils import nrmse_score, r2_score
 from heat_solver import HeatSolver
 
 
@@ -21,7 +22,8 @@ class InverseSolver:
         lr=1e-3,
         alpha=0.1,
         sigma_0=1,
-        device='cpu'
+        device='cpu',
+        max_grad_norm=None
     ):
         if isinstance(device, torch.device):
             self.device = device
@@ -42,6 +44,9 @@ class InverseSolver:
 
         self.sigma_module = sigma_module.to(self.device)
         self.optimizer = torch.optim.Adam(self.sigma_module.parameters(), lr=lr)
+        self.max_grad_norm = max_grad_norm
+        self.last_run_logs = {}
+        self.sigma_est = None
 
         if isinstance(sigma_0, torch.Tensor):
             self.sigma_0 = sigma_0.to(self.device)
@@ -49,10 +54,20 @@ class InverseSolver:
         else:
             self.sigma_0 = sigma_0
     
-    def solve(self, max_iters=10000, tol=1e-3, **kwargs):
+    def solve(
+            self,
+            max_iters=10000,
+            tol=1e-3,
+            early_stopping=False,
+            patience=10,
+            early_stopping_delta=None,
+            **kwargs
+        ):
         boundary_loss_history = []
         regularization_loss_history = []
         total_loss_history = []
+        gradient_norm_history = []
+        n_steps_no_improve = 0
         for i in tqdm(range(max_iters)):
             sigma = self.sigma_module()
             _, u_b_history, _ = self.solver(sigma, self.T, self.n_steps, **kwargs)
@@ -63,21 +78,58 @@ class InverseSolver:
 
             self.optimizer.zero_grad()
             loss.backward()
+            if self.max_grad_norm is not None:
+                parameters = [param for param in self.sigma_module.parameters() if param.grad is not None]
+                if parameters:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm).item()
+                else:
+                    grad_norm = 0.0
+                gradient_norm_history.append(grad_norm)
+
             self.optimizer.step()
 
             boundary_loss_history.append(loss_data.item())
             regularization_loss_history.append(loss_reg.item())
             total_loss_history.append(loss.item())
-        
-            if total_loss_history[-1]/total_loss_history[0] < tol:
-                print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
-                break
+            if len(total_loss_history) > 1:
+                improvement = total_loss_history[-2] - total_loss_history[-1]
+            else:
+                improvement = float('nan')
             
-            print(f"Iter {i}: Loss = {loss.item():.6f}")
+            if early_stopping_delta is not None:
+                if improvement < early_stopping_delta:
+                    n_steps_no_improve += 1
+            elif improvement < 0:
+                n_steps_no_improve += 1
+        
+            nrmse = nrmse_score(u_b_history, self.u_b_gt)
+            r2 = r2_score(u_b_history, self.u_b_gt)
+            if nrmse < tol:
+                print(f"Converged at iteration {i}, loss: {loss.item():.6f}; nrmse={nrmse:.6f}; R2: {r2:.5f}")
+                break
+
+            if early_stopping:
+                if n_steps_no_improve > patience:
+                    print(
+                        f"Early stopping at iteration {i}"
+                    )
+                    print(f"Loss = {loss.item():.6f}; nrmse={nrmse:.6f}; R2: {r2:.5f}")
+                    break
+        
+            print(f"Iter {i}: Loss = {loss.item():.6f}; nrmse={nrmse:.6f}; R2: {r2:.5f}")
 
         sigma_est = self.sigma_module()
+        self.sigma_est = sigma_est
 
-        return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
+        logs = {
+            'total_loss_history': total_loss_history,
+            'boundary_loss_history': boundary_loss_history,
+            'regularization_loss_history': regularization_loss_history,
+            'gradient_norm_history': gradient_norm_history,
+        }
+        self.last_run_logs = logs
+
+        return sigma_est, logs
 
 
 

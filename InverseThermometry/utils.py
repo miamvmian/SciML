@@ -8,10 +8,10 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
-def relative_rmse(pred, real):
+def nrmse_score(pred, real):
     rmse = torch.sqrt(torch.mean(torch.square(real - pred)))
-    mean = torch.mean(real)
-    return (rmse / mean).item()
+    norm = torch.sqrt(torch.mean(torch.square(pred)))
+    return (rmse / norm).item()
 
 
 def r2_score(pred, real):
@@ -302,6 +302,54 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_comparison(x, y, pred, real):
+    error = pred - real
+
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+
+    # Numerical solution
+    im1 = axes[0, 0].contourf(
+        x.detach().numpy(),
+        y.detach().numpy(),
+        pred.detach().numpy(),
+        levels=20,
+        cmap="viridis",
+    )
+    axes[0, 0].set_title("Numerical Solution")
+    axes[0, 0].set_xlabel("x")
+    axes[0, 0].set_ylabel("y")
+    axes[0, 0].set_aspect("equal")
+    plt.colorbar(im1, ax=axes[0, 0], label="Temperature")
+
+    # Analytical solution
+    im2 = axes[0, 1].contourf(
+        x.detach().numpy(),
+        y.detach().numpy(),
+        real.detach().numpy(),
+        levels=20,
+        cmap="viridis",
+    )
+    axes[0, 1].set_title("Analytical Solution")
+    axes[0, 1].set_xlabel("x")
+    axes[0, 1].set_ylabel("y")
+    axes[0, 1].set_aspect("equal")
+    plt.colorbar(im2, ax=axes[0, 1], label="Temperature")
+
+    # Error
+    im3 = axes[1, 0].contourf(
+        x.detach().numpy(),
+        y.detach().numpy(),
+        error.detach().numpy(),
+        levels=20,
+        cmap="RdBu_r",
+    )
+    axes[1, 0].set_title("Error (Numerical - Analytical)")
+    axes[1, 0].set_xlabel("x")
+    axes[1, 0].set_ylabel("y")
+    axes[1, 0].set_aspect("equal")
+    plt.colorbar(im3, ax=axes[1, 0], label="Error")
 
 
 def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Comparison"):
