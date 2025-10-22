@@ -1,5 +1,7 @@
 """
-Utility functions for heat equation solver verification and visualization
+Utility functions used by the heat solver and the inverse workflow.
+Includes reference solutions/sources, error metrics, plotting helpers,
+conductivity field generators, and informative printing utilities.
 """
 
 import torch
@@ -11,7 +13,8 @@ from mpl_toolkits.mplot3d import Axes3D
 def _apply_neumann_bc(u):
     """
     Apply Neumann boundary conditions (zero gradient at boundaries).
-    Uses ghost cells approach with symmetric extension.
+    Build a ghost-cell padding with symmetric extension so that
+    ∂u/∂n = 0 at the domain boundary.
     
     Args:
         u: temperature field [M, M]
@@ -56,7 +59,7 @@ def verification_solution(x, y, t):
     Returns:
         analytical solution u(x,y,t)
     """
-    # Convert t to tensor if it's a float
+    # Allow scalar t and place it on the right device/dtype
     if isinstance(t, (int, float)):
         t = torch.tensor(t, dtype=x.dtype, device=x.device)
     
@@ -79,7 +82,7 @@ def verification_source(x, y, t, sigma=1.0):
     Returns:
         source term f(x,y,t)
     """
-    # Convert t to tensor if it's a float
+    # Allow scalar t
     if isinstance(t, (int, float)):
         t = torch.tensor(t, dtype=x.dtype, device=x.device)
     
@@ -96,6 +99,21 @@ def verification_source(x, y, t, sigma=1.0):
     return f
 
 
+def sinusoidal_source(x, y, t, spatial=True):
+    """
+    Sinusoidal-in-time source. If spatial=True, modulate by cos(πx)cos(πy)
+    to avoid spatial uniformity (which would make the solution independent of σ
+    under Neumann BCs). Returns an [M,M] tensor matching x/y.
+    """
+    if isinstance(t, (int, float)):
+        t = torch.tensor(t, dtype=x.dtype, device=x.device)
+    if spatial:
+        return torch.sin(torch.pi * t) * torch.cos(torch.pi * x) * torch.cos(torch.pi * y)
+        
+    else:
+        return torch.sin(torch.pi * t).expand_as(x)
+
+
 def compute_l2_error(u_numerical, u_analytical):
     """
     Compute L2 error between numerical and analytical solutions.
@@ -107,7 +125,7 @@ def compute_l2_error(u_numerical, u_analytical):
     Returns:
         L2 error
     """
-    error = u_numerical - u_analytical
+    error = u_numerical - u_analytical  # per-cell residual
     l2_error = torch.sqrt(torch.mean(error**2))
     return l2_error
 
@@ -124,7 +142,7 @@ def compute_relative_error(u_numerical, u_analytical):
         relative L2 error
     """
     l2_error = compute_l2_error(u_numerical, u_analytical)
-    l2_analytical = torch.sqrt(torch.mean(u_analytical**2))
+    l2_analytical = torch.sqrt(torch.mean(u_analytical**2))  # ||u||_2
     return l2_error / l2_analytical
 
 
@@ -140,7 +158,7 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
     
-    # 2D contour plot
+    # 2D contour plot at cell centers
     im1 = ax1.contourf(x, y, u, levels=20, cmap='viridis')
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
@@ -199,7 +217,7 @@ def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Compar
     axes[1, 0].set_aspect('equal')
     plt.colorbar(im3, ax=axes[1, 0], label='Error')
     
-    # Cross-section at y = 0.5 (slice along fixed column index in 'ij' meshgrid)
+    # Cross-section at mid y (slice along fixed column index for 'ij' meshgrid)
     y_idx = y.shape[1] // 2
     axes[1, 1].plot(x[:, y_idx].detach().numpy(), u_numerical[:, y_idx].detach().numpy(), 'b-', label='Numerical', linewidth=2)
     axes[1, 1].plot(x[:, y_idx].detach().numpy(), u_analytical[:, y_idx].detach().numpy(), 'r--', label='Analytical', linewidth=2)
@@ -227,7 +245,7 @@ def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
     
     plt.loglog(h_values, errors, 'bo-', linewidth=2, markersize=8, label='Numerical Error')
     
-    # Reference lines for convergence rates
+    # Reference lines for expected convergence slopes
     h_ref = np.array(h_values)
     plt.loglog(h_ref, h_ref, 'r--', alpha=0.7, label='O(h)')
     plt.loglog(h_ref, h_ref**2, 'g--', alpha=0.7, label='O(h²)')
@@ -254,7 +272,7 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
     Returns:
         conductivity field [M, M]
     """
-    h = 1.0 / M
+    h = 1.0 / M  # cell size
     x = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
     y = torch.linspace(0, 1, M+1, device=device)[:-1] + h/2
     X, Y = torch.meshgrid(x, y, indexing='ij')
@@ -262,8 +280,9 @@ def create_conductivity_field(M, pattern='constant', device='cpu'):
     if pattern == 'constant':
         sigma = torch.ones(M, M, device=device)
     elif pattern == 'linear':
-        sigma = 1 + X + Y
+        sigma = 1 + X + Y  # linear ramp across domain
     elif pattern == 'sigmoid':
+        # smooth bump centered at the domain center
         sigma = 1 + torch.sigmoid((X - 0.5)**2 + (Y - 0.5)**2)
     else:
         raise ValueError(f"Unknown pattern: {pattern}")
@@ -291,6 +310,7 @@ def print_solver_info(M, T, tau, n_steps, sigma_max):
     print(f"Time step: τ = {tau:.6f}")
     print(f"Number of steps: {n_steps}")
     print(f"Maximum conductivity: σ_max = {sigma_max:.4f}")
+    # Classical constant-coefficient stability bound; solver uses a conservative 1/8 factor
     print(f"Stability limit: τ_max = {1.0/(4*M**2*sigma_max):.6f}")
     print(f"CFL number: {tau * 4 * sigma_max * M**2:.4f}")
     print("=" * 50)

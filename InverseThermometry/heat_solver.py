@@ -1,6 +1,7 @@
 """
-Differentiable Forward Solver for 2D Heat Equation
-Implements finite volume method with explicit Euler time-stepping
+Differentiable forward solver for the 2D heat equation.
+Finite-volume form with interface-averaged conductivity and explicit Euler in time.
+Boundary condition: homogeneous Neumann (zero normal flux).
 """
 
 import torch
@@ -83,8 +84,8 @@ def compute_stable_timestep(sigma, h):
         maximum stable time step
     """
     sigma_max = torch.max(sigma)
-    # Use more conservative time step for stability
-    tau_max = h**2 / (8 * sigma_max)  # More conservative than h^2/(4*sigma)
+    # Conservative constant for variable-coefficient diffusion
+    tau_max = h**2 / (8 * sigma_max)
     return tau_max
 
 
@@ -115,7 +116,7 @@ def solve_heat_equation(sigma, source_func, M, T, n_steps=None, device='cpu'):
     # Initialize temperature field
     u = torch.zeros(M, M, device=device, dtype=torch.float32)
     
-    # Compute stable time step
+    # Compute stable time step bound based on current sigma
     tau_max = compute_stable_timestep(sigma, h)
     
     if n_steps is None:
