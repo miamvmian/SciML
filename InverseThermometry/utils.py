@@ -7,6 +7,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+from heat_solver import HeatSolver
+
+
+def get_boundary_conditions(sigma, heat_source, T, max_sigma, device='cpu'):
+    M = sigma.shape[0]
+    solver = HeatSolver(M, heat_source, device)
+    _, u_b_history, _ = solver(sigma, T, max_sigma=max_sigma)
+    return u_b_history
+
 
 def relative_rmse(pred, real):
     rmse = torch.sqrt(torch.mean(torch.square(real - pred)))
