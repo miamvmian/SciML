@@ -460,25 +460,22 @@ def precompute_source_history(source_func, M, n_frames, tau, device):
     return source_history
 
 
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML, display
-
-
 def compare(u_history, u_gt_history, source_history, tau):
-    # --- Downscale time dimension to 100 evenly spaced slices ---
-    n_frames = u_history.shape[0]
-    if n_frames > 100:
-        idx = torch.linspace(0, n_frames - 1, 100).long()
+    # --- Original number of frames ---
+    n_frames_full = u_history.shape[0]
+
+    # --- Downscale to 100 evenly spaced frames if needed ---
+    if n_frames_full > 100:
+        idx = torch.linspace(0, n_frames_full - 1, 100).long()
         u_history = u_history[idx]
         u_gt_history = u_gt_history[idx]
         source_history = source_history[idx]
-    n_frames = u_history.shape[0]
+        # Use real times corresponding to selected frames
+        ts = idx.to(torch.float32) * tau
+    else:
+        ts = torch.arange(n_frames_full, device=u_history.device) * tau
 
-    # --- Time axis ---
-    ts = torch.arange(n_frames, device=u_history.device) * tau
+    n_frames = u_history.shape[0]
 
     # --- Convert to NumPy ---
     u_sim_np = u_history.detach().cpu().numpy()
@@ -553,7 +550,7 @@ def compare(u_history, u_gt_history, source_history, tau):
     anim = FuncAnimation(
         fig,
         _update,
-        frames=len(times_np),
+        frames=n_frames,
         interval=120,
         blit=False,
     )
