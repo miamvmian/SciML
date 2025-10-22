@@ -147,8 +147,10 @@ class HeatSolver(nn.Module):
             print(f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}")
         
         # Store solution history
+        u_history = torch.zeros((n_steps + 1, self.M, self.M), device=self.device)
         u_b_history = torch.zeros((n_steps + 1, 4*(self.M - 1)), device=self.device)
 
+        u_history[0] = u.clone()
         u_b_history[0] = u[self.mask].clone()
         
         # Time stepping
@@ -162,9 +164,10 @@ class HeatSolver(nn.Module):
             u = fv_euler_step_neumann(u, sigma, f, self.h, self.tau)
             
             # Store solution
+            u_history[k+1] = u.clone()
             u_b_history[k + 1] = u[self.mask].clone()
 
-        return u, u_b_history
+        return u, u_b_history, u_history
 
 
 def solve_heat_equation(sigma, source, M, T, device='cpu'):
@@ -183,6 +186,6 @@ def solve_heat_equation(sigma, source, M, T, device='cpu'):
     """
 
     solver = HeatSolver(M, source, device)
-    u_final, u_b_history = solver(sigma, T, print_info=True)
-    return u_final, u_b_history
+    u_final, u_b_history, u_history = solver(sigma, T, print_info=True)
+    return u_final, u_b_history, u_history
     

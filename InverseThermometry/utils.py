@@ -8,6 +8,12 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
+def r2_score(real, pred):
+    mse = torch.mean(torch.square(real - pred))
+    var = torch.var(real, correction=0)
+    return (1.0 - mse / var).item()
+
+
 def _boundary_mask(M, device):
     # Boundary indicator with True at the domain boundary
     # Order matters for downstream stacking/slicing consistency.

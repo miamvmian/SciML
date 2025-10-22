@@ -42,7 +42,6 @@ class InverseSolver:
 
         if isinstance(sigma_0, torch.Tensor):
             sigma_0.requires_grad_(False)
-
     
     def solve(self, max_iters=10000, tol=1e-3, **kwargs):
         boundary_loss_history = []
@@ -64,14 +63,14 @@ class InverseSolver:
             boundary_loss_history.append(loss_data.item())
             regularization_loss_history.append(loss_reg.item())
             total_loss_history.append(loss.item())
-
+        
             if loss.item() < tol:
                 print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
                 break
             
             print(f"Iter {i}: Loss = {loss.item():.6f}")
 
-        sigma_est = self.sigma_module().detach().cpu().numpy()
+        sigma_est = self.sigma_module()
 
         return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
 
