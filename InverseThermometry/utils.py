@@ -150,12 +150,12 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     
     # 3D surface plot
     ax2 = fig.add_subplot(122, projection='3d')
-    ax2.plot_surface(x, y, u, cmap='viridis', alpha=0.8)
+    surf = ax2.plot_surface(x, y, u, cmap='viridis', alpha=0.8)
     ax2.set_xlabel('x')
     ax2.set_ylabel('y')
     ax2.set_zlabel('Temperature')
     ax2.set_title(f'{title} - 3D Surface')
-    
+    plt.colorbar(surf, ax=ax2, label='Temperature')
     plt.tight_layout()
     plt.savefig(f"solution_{title}.png")
     plt.close()
@@ -199,13 +199,13 @@ def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Compar
     axes[1, 0].set_aspect('equal')
     plt.colorbar(im3, ax=axes[1, 0], label='Error')
     
-    # Cross-section at y = 0.5
-    y_mid = y.shape[0] // 2
-    axes[1, 1].plot(x[y_mid, :].detach().numpy(), u_numerical[y_mid, :].detach().numpy(), 'b-', label='Numerical', linewidth=2)
-    axes[1, 1].plot(x[y_mid, :].detach().numpy(), u_analytical[y_mid, :].detach().numpy(), 'r--', label='Analytical', linewidth=2)
+    # Cross-section at y = 0.5 (slice along fixed column index in 'ij' meshgrid)
+    y_idx = y.shape[1] // 2
+    axes[1, 1].plot(x[:, y_idx].detach().numpy(), u_numerical[:, y_idx].detach().numpy(), 'b-', label='Numerical', linewidth=2)
+    axes[1, 1].plot(x[:, y_idx].detach().numpy(), u_analytical[:, y_idx].detach().numpy(), 'r--', label='Analytical', linewidth=2)
     axes[1, 1].set_xlabel('x')
     axes[1, 1].set_ylabel('Temperature')
-    axes[1, 1].set_title(f'Cross-section at y = {y[y_mid, 0]:.2f}')
+    axes[1, 1].set_title(f'Cross-section at y = {y[0, y_idx]:.2f}')
     axes[1, 1].legend()
     axes[1, 1].grid(True, alpha=0.3)
     

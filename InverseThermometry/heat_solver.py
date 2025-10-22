@@ -54,9 +54,9 @@ def heat_step(u, sigma, f, h, tau):
     du_x = u[1:, :] - u[:-1, :]              # [M-1, M]
     du_y = u[:, 1:] - u[:, :-1]              # [M, M-1]
 
-    # Physical fluxes at interfaces: q = -σ ∂u/∂n
-    flux_x = -sigma_x * (du_x / h)           # [M-1, M]
-    flux_y = -sigma_y * (du_y / h)           # [M, M-1]
+    # Physical fluxes at interfaces: define q = +σ ∂u/∂n so that div(q) = ∇·(σ∇u)
+    flux_x = sigma_x * (du_x / h)            # [M-1, M]
+    flux_y = sigma_y * (du_y / h)            # [M, M-1]
 
     # Neumann BC (zero normal flux): pad interface flux arrays with zeros at boundaries
     flux_x_pad = torch.zeros(u.shape[0] + 1, u.shape[1], dtype=u.dtype, device=u.device)
