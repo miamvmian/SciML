@@ -17,11 +17,10 @@ class InverseSolver:
         source_func,
         M,
         T=None,
-        n_steps=None,
         lr=1e-3,
         alpha=0.1,
-        sigma_0=1,
-        device='cpu'
+        sigma_0=1.0,
+        device="cpu",
     ):
         if isinstance(device, torch.device):
             self.device = device
@@ -33,7 +32,7 @@ class InverseSolver:
 
         self.M = M
         self.T = T
-        self.n_steps = n_steps
+        self.n_steps = u_b_gt.shape[0] - 1
 
         self.alpha = alpha
         self.sigma_0 = sigma_0
@@ -48,16 +47,17 @@ class InverseSolver:
             self.sigma_0.requires_grad_(False)
         else:
             self.sigma_0 = sigma_0
-    
-    def solve(self, max_iters=10000, tol=1e-3, **kwargs):
-        boundary_loss_history = []
-        regularization_loss_history = []
-        total_loss_history = []
-        for i in tqdm(range(max_iters)):
+
+    def solve(self, max_iters=10000, **kwargs):
+        for _ in range(max_iters):
             sigma = self.sigma_module()
             _, u_b_history, _ = self.solver(sigma, self.T, self.n_steps, **kwargs)
-            
-            loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
+
+            loss_data = (
+                self.solver.h
+                * self.solver.tau
+                * (u_b_history - self.u_b_gt).square().sum()
+            )
             loss_reg = self.solver.h**2 * (sigma - self.sigma_0).square().sum()
             loss = loss_data + self.alpha * loss_reg
 
@@ -65,22 +65,7 @@ class InverseSolver:
             loss.backward()
             self.optimizer.step()
 
-            boundary_loss_history.append(loss_data.item())
-            regularization_loss_history.append(loss_reg.item())
-            total_loss_history.append(loss.item())
-        
-            if total_loss_history[-1]/total_loss_history[0] < tol:
-                print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
-                break
-            
-            print(f"Iter {i}: Loss = {loss.item():.6f}")
+            yield loss_data.item(), loss_reg.item(), loss.item()
 
-        sigma_est = self.sigma_module()
-
-        return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
-
-
-
-
-
-        
+    def get_solution(self):
+        return self.sigma_module()

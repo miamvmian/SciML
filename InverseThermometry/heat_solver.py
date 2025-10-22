@@ -11,13 +11,6 @@ from typing import Optional, Literal
 from utils import _boundary_mask
 
 
-def get_boundary_conditions(sigma, heat_source, T, max_sigma, device="cpu"):
-    M = sigma.shape[0]
-    solver = HeatSolver(M, heat_source, device)
-    _, u_b_history, _ = solver(sigma, T, max_sigma=max_sigma)
-    return u_b_history
-
-
 def harmonic_average(sigma, axis):
     """
     Compute harmonic average at cell interfaces.

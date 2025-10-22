@@ -2,10 +2,11 @@
 Utility functions for heat equation solver verification and visualization
 """
 
+from IPython.display import display, HTML
+from matplotlib.animation import FuncAnimation
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 
 def relative_rmse(pred, real):
@@ -53,7 +54,7 @@ class SigmoidSigma(torch.nn.Module):
         )
 
 
-def create_conductivity_field(M, pattern="constant", device="cpu"):
+def create_conductivity_field(M=10, pattern="constant", device="cpu"):
     """
     Create different conductivity field patterns for testing.
 
@@ -106,9 +107,9 @@ def sine_gauss_source(
         )
     else:
         t_tensor = t.to(x.device)
-        return torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1)).abs() * torch.exp(
-            -0.5 * ((x - 0.5) ** 2 - (y - 0.5) ** 2) * 6
-        )
+        return torch.sin(
+            omega * t_tensor.unsqueeze(-1).unsqueeze(-1)
+        ).abs() * torch.exp(-0.5 * ((x - 0.5) ** 2 - (y - 0.5) ** 2) * 6)
 
 
 def sine_sine_source(
@@ -145,14 +146,18 @@ def sine_cosine_source(
 
     if isinstance(t, (int, float)):
         t_tensor = torch.tensor([t], dtype=x_local.dtype, device=target_device)
-        return (torch.sin(omega * t_tensor) + 1) * torch.cos(np.pi * x_local) * torch.cos(
-            np.pi * y_local
+        return (
+            (torch.sin(omega * t_tensor) + 1)
+            * torch.cos(np.pi * x_local)
+            * torch.cos(np.pi * y_local)
         )
     else:
         t_tensor = t.to(target_device)
-        return (torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1)) + 1) * torch.cos(
-            np.pi * x_local
-        ) * torch.cos(np.pi * y_local)
+        return (
+            (torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1)) + 1)
+            * torch.cos(np.pi * x_local)
+            * torch.cos(np.pi * y_local)
+        )
 
 
 def create_source_function(pattern="constant", device="cpu"):
@@ -437,3 +442,105 @@ def print_solver_info(M, T, tau, n_steps, sigma_max):
     print(f"Stability limit: τ_max = {1.0/(4*M**2*sigma_max):.6f}")
     print(f"CFL number: {tau * 4 * sigma_max * M**2:.4f}")
     print("=" * 50)
+
+
+def compare(u_history, u_gt_history, source_func, tau):
+    M = u_history.shape[1]
+    h = 1.0 / M
+    x = (
+        torch.linspace(0, 1, M + 1, device=u_history.device)[:-1] + h / 2
+    )  # Cell centers
+    y = torch.linspace(0, 1, M + 1, device=u_history.device)[:-1] + h / 2
+
+    # Create coordinate grids
+    X, Y = torch.meshgrid(x, y, indexing="ij")
+
+    n_frames = u_history.shape[0]
+    ts = torch.arange(n_frames, device=u_history.device) * tau
+
+    with torch.no_grad():
+        source_history = torch.stack([source_func(X, Y, t) for t in ts], dim=0)
+
+    u_sim_np = u_history.detach().cpu().numpy()
+
+    u_gt_np = u_gt_history.detach().cpu().numpy()
+    residual_np = (u_history - u_gt_history).detach().cpu().numpy()
+    source_np = source_history.detach().cpu().numpy()
+    times_np = ts.detach().cpu().numpy()
+
+    vmin = float(min(u_sim_np.min(), u_gt_np.min()))
+    vmax = float(max(u_sim_np.max(), u_gt_np.max()))
+    res_lim = float(np.max(np.abs(residual_np)))
+    if res_lim == 0.0:
+        res_lim = 1e-12
+
+    source_lim = float(np.max(np.abs(source_np)))
+    if source_lim == 0.0:
+        source_lim = 1e-12
+
+    extent = [0.0, 1.0, 0.0, 1.0]
+
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+
+    im_sim = axes[0].imshow(
+        u_sim_np[0], cmap="viridis", origin="lower", extent=extent, vmin=vmin, vmax=vmax
+    )
+    axes[0].set_title("Simulation")
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y")
+    fig.colorbar(im_sim, ax=axes[0], fraction=0.046, pad=0.04, label="Temperature")
+
+    im_gt = axes[1].imshow(
+        u_gt_np[0], cmap="viridis", origin="lower", extent=extent, vmin=vmin, vmax=vmax
+    )
+    axes[1].set_title("Analytical Ground Truth")
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+    fig.colorbar(im_gt, ax=axes[1], fraction=0.046, pad=0.04, label="Temperature")
+
+    im_res = axes[2].imshow(
+        residual_np[0],
+        cmap="RdBu_r",
+        origin="lower",
+        extent=extent,
+        vmin=-res_lim,
+        vmax=res_lim,
+    )
+    axes[2].set_title("Residual (Simulation - Truth)")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    fig.colorbar(im_res, ax=axes[2], fraction=0.046, pad=0.04, label="Residual")
+
+    im_src = axes[3].imshow(
+        source_np[0],
+        cmap="RdBu_r",
+        origin="lower",
+        extent=extent,
+        vmin=-source_lim,
+        vmax=source_lim,
+    )
+    axes[3].set_title("Source Term")
+    axes[3].set_xlabel("x")
+    axes[3].set_ylabel("y")
+    fig.colorbar(im_src, ax=axes[3], fraction=0.046, pad=0.04, label="Source")
+
+    time_text = fig.suptitle(f"t = {times_np[0]:.3f}")
+
+    def _update(frame):
+        im_sim.set_data(u_sim_np[frame])
+        im_gt.set_data(u_gt_np[frame])
+        im_res.set_data(residual_np[frame])
+        im_src.set_data(source_np[frame])
+        time_text.set_text(f"t = {times_np[frame]:.3f}")
+        return im_sim, im_gt, im_res, im_src
+
+    anim = FuncAnimation(
+        fig,
+        _update,
+        frames=len(times_np),
+        interval=120,
+        blit=False,
+    )
+
+    display(HTML(anim.to_jshtml()))
+    plt.close(fig)
