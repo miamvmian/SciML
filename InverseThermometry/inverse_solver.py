@@ -1,77 +1,238 @@
 """
-Solve the inverse problem
+Inverse utilities:
+ - Generate synthetic boundary temperature datasets for the forward heat solver
+ - Optimize thermal conductivity from boundary measurements via gradient-based fitting
+The forward model is differentiable; we keep the inverse code simple and explicit.
 """
 
+import os
+import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
 
-from heat_solver import HeatSolver
+# Import strategy
+#  - When executed as a module (python -m InverseThermometry.inverse_solver),
+#    relative imports work.
+#  - When executed as a script (python InverseThermometry/inverse_solver.py),
+#    fall back to adding the current dir to sys.path and do absolute imports.
+try:
+    from .heat_solver import solve_heat_equation
+    from .utils import create_conductivity_field, sinusoidal_source
+except ImportError:  # no parent package when run as a script
+    import sys
+
+    sys.path.append(os.path.dirname(__file__))
+    from heat_solver import solve_heat_equation
+    from utils import create_conductivity_field, sinusoidal_source
 
 
-class InverseSolver:
-    def __init__(
-        self,
-        M,
-        u_b_gt,
-        source_func,
-        T=1,
-        n_steps=None,
-        alpha=0.1,
-        sigma_0=1,
-        device='cpu'
-    ):
-        self.M = M
-        self.u_b_gt = u_b_gt
-        self.u_b_gt.requires_grad_(False)
+def generate_boundary_dataset(
+    M, T, device="cpu", save_path="InverseThermometry/data/boundary_dataset.npz"
+):
+    """
+    Generate boundary temperature dataset with 5% uniform multiplicative noise.
+    - Conductivity: linear sigma(x,y)=1+x+y
+    - Source: f(x,y,t)=sin(pi t)
+    - Boundary points: all cell-center boundary nodes (m=4M-4)
+    Returns coords [m,2], times [K], u_clean [K,m], d_noisy [K,m]
+    """
+    # True conductivity used to create synthetic data
+    sigma = create_conductivity_field(M, "linear", device=device)
+    _, u_hist = solve_heat_equation(
+        sigma, sinusoidal_source, M, T, n_steps=None, device=device
+    )
 
-        self.T = T
-        self.n_steps = n_steps
+    # Build cell-center coordinates (ij indexing)
+    h = 1.0 / M
+    x = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2
+    y = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2
+    X, Y = torch.meshgrid(x, y, indexing="ij")
 
-        self.alpha = alpha
-        self.sigma_0 = sigma_0
+    # Select all boundary cells (top/bottom/left/right)
+    mask = _boundary_mask(M, device=device)
 
-        self.device = device
+    # Record boundary coordinates in mask traversal order (row-major)
+    coords = torch.stack([X[mask], Y[mask]], dim=-1)
+    # Extract boundary temperatures across time → shape [K, m]
+    U = u_hist[:, mask]
+    K = U.shape[0]
 
-        self.solver = HeatSolver(self.sigma_0, self.M, source_func, self.device)
+    # Apply 5% uniform multiplicative noise, ρ ~ U[-1, 1]
+    rho = 2 * torch.rand_like(U) - 1
+    # Multiplicative noise matches project spec: d_sk = (1 + 0.05 ρ) u(x_s,y_s,t_k)
+    D = (1 + 0.05 * rho) * U
+    time_smaples = torch.linspace(0, T, K, device=device)
 
-        if isinstance(sigma_0, torch.Tensor):
-            sigma_0.requires_grad_(False)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    # Persist minimal pieces needed for the inverse step
+    np.savez(
+        save_path,
+        coords=coords.detach().cpu().numpy(),
+        time_samples=time_smaples.detach().cpu().numpy(),
+        u_clean=U.detach().cpu().numpy(),
+        d_noisy=D.detach().cpu().numpy(),
+        M=M,
+        T=T,
+    )
 
-    
-    def solve(self, lr=1e-3, max_iters=10000, tol=1e-3, **kwargs):
-        optimizer = torch.optim.Adam(self.solver.parameters(), lr=lr)
-    
-        boundary_loss_history = []
-        regularization_loss_history = []
-        total_loss_history = []
-        for i in tqdm(range(max_iters)):
-            _, u_b_history = self.solver(self.T, self.n_steps, **kwargs)
-            
-            loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
-            loss_reg = self.solver.h**2 * (self.solver.sigma - self.sigma_0).square().sum()
-            loss = loss_data + self.alpha * loss_reg
+    return coords, time_smaples, U, D
 
+
+def _boundary_mask(M, device):
+    # Boundary indicator with True at the domain boundary
+    # Order matters for downstream stacking/slicing consistency.
+    mask = torch.zeros(M, M, dtype=torch.bool, device=device)
+    mask[0, :] = mask[-1, :] = mask[:, 0] = mask[:, -1] = True
+    return mask
+
+
+def softplus_inverse(x: float) -> float:
+    return float(np.log(np.exp(x) - 1.0))
+
+
+def optimize_conductivity_from_dataset(
+    dataset_path: str,
+    num_iters: int = 200,
+    lr: float = 1e-1,
+    alpha: float = 1e-1,
+    sigma0: float = 2.0,
+    sigma_min: float = 0.1,
+    sigma_max: float = 3.0,
+    device: str = "cpu",
+):
+    """
+    Inverse solver: fit σ(x,y) to boundary measurements d_noisy.
+
+    Objective (discrete):
+      L(σ) = h τ Σ_{k=1..K} Σ_{s∈∂Ω} (u_σ(x_s,y_s,t_k) − d_sk)^2
+             + α h^2 Σ_{cells} (σ − σ0)^2
+
+    - h τ scales data term by space-time measure (cell area and dt).
+    - α h^2 makes the Tikhonov term grid-independent (units-consistent).
+    - σ is parameterized so it stays within [sigma_min, sigma_max].
+    Returns: estimated σ tensor and the loss history list.
+    """
+    # Load dataset produced by generate_boundary_dataset
+    data = np.load(dataset_path)
+    M = int(data["M"].item()) if np.ndim(data["M"]) == 0 else int(data["M"])
+    T = float(data["T"].item()) if np.ndim(data["T"]) == 0 else float(data["T"])
+    time_samples = torch.tensor(
+        data["time_samples"], device=device, dtype=torch.float32
+    )
+    D = torch.tensor(data["d_noisy"], device=device, dtype=torch.float32)  # [K, m]
+
+    # Dataset has K time samples (including t=0). Use the same grid for the forward model
+    K, m = D.shape
+    n_steps = K - 1
+    h = 1.0 / M
+    tau = T / n_steps
+
+    # Parameterization: σ(θ) = σ_min + (σ_max - σ_min) · sigmoid(θ) keeps σ within [σ_min, σ_max]
+    def logit(p: float) -> float:
+        return float(np.log(p) - np.log(1.0 - p))
+
+    p0 = (sigma0 - sigma_min) / (sigma_max - sigma_min)
+    # Clamp to avoid logit singularities/saturation at 0 or 1
+    p0 = float(np.clip(p0, 1e-6, 1.0 - 1e-6))
+    init_val = logit(p0)
+    # Optimization variable θ (same shape as σ); broadcasting is explicit and clear
+    sigma_param = torch.full(
+        (M, M), init_val, device=device, dtype=torch.float32, requires_grad=True
+    )
+
+    optimizer = torch.optim.Adam([sigma_param], lr=lr)
+
+    mask = _boundary_mask(M, device)
+    loss_history = []
+
+    it = -1
+    try:
+        for it in range(num_iters):
             optimizer.zero_grad()
+            # Map unconstrained parameters to bounded conductivity
+            sigma = sigma_min + (sigma_max - sigma_min) * torch.sigmoid(sigma_param)
+
+            # Forward solve on the same time grid as the dataset
+            _, u_hist = solve_heat_equation(
+                sigma, sinusoidal_source, M, T, n_steps=n_steps, device=device
+            )
+            U_pred = u_hist[:, mask]  # [K, m]
+
+            # Data misfit weighted by cell area (h) and timestep (τ)
+            data_term = h * tau * torch.sum((U_pred - D) ** 2)
+            # Tikhonov regularization that keeps σ near σ0 (dimensionally consistent via h^2)
+            reg_term = alpha * (h**2) * torch.sum((sigma - sigma0) ** 2)
+            loss = data_term + reg_term
+
             loss.backward()
+            # Optional diagnostics: gradient norm should be > 0 and not explode
+            print(f"grad norm: {sigma_param.grad.norm().item():.6e}")
             optimizer.step()
 
-            boundary_loss_history.append(loss_data.item())
-            regularization_loss_history.append(loss_reg.item())
-            total_loss_history.append(loss.item())
+            loss_history.append(float(loss.detach().cpu()))
+            if (it + 1) % max(1, num_iters // 10) == 0:
+                print(
+                    f"Iter {it+1}/{num_iters}  loss={loss.item():.6e}  data={data_term.item():.6e}  reg={reg_term.item():.6e}"
+                )
+    except KeyboardInterrupt:
+        print(f"\nOptimization interrupted at iter {it+1}. Returning current estimate.")
 
-            if loss.item() < tol:
-                print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
-                break
-            
-            print(f"Iter {i}: Loss = {loss.item():.6f}")
-    
-        sigma_est = self.solver.sigma.detach().cpu().numpy()
-
-        return sigma_est, total_loss_history, boundary_loss_history, regularization_loss_history
-
+    sigma_est = (
+        sigma_min + (sigma_max - sigma_min) * torch.sigmoid(sigma_param)
+    ).detach()
+    return sigma_est, loss_history
 
 
+def run_training(
+    M: int = 10,
+    T: float = 1.0,
+    device: str = "cpu",
+    dataset: str = "InverseThermometry/data/boundary_dataset.npz",
+    iters: int = 100,
+    lr: float = 1e-1,
+    alpha: float = 1e-3,
+    sigma0: float = 2.0,
+    sigma_min: float = 0.1,
+    sigma_max: float = 3.0,
+    outdir: str = "InverseThermometry/results",
+):
+    # Ensure the dataset directory exists
+    os.makedirs(os.path.dirname(dataset), exist_ok=True)
+
+    # Reuse dataset if M,T match; otherwise regenerate to stay consistent
+    if os.path.exists(dataset):
+        d = np.load(dataset)
+        M_saved = int(d["M"]) if np.ndim(d["M"]) == 0 else int(d["M"])
+        T_saved = float(d["T"]) if np.ndim(d["T"]) == 0 else float(d["T"])
+        if M_saved != M or abs(T_saved - T) > 1e-12:
+            print("Dataset M/T mismatch; regenerating...")
+            generate_boundary_dataset(M, T, device=device, save_path=dataset)
+    else:
+        generate_boundary_dataset(M, T, device=device, save_path=dataset)
+
+    print("Starting optimization...")
+    sigma_est, loss_hist = optimize_conductivity_from_dataset(
+        dataset_path=dataset,
+        num_iters=iters,
+        lr=lr,
+        alpha=alpha,
+        sigma0=sigma0,
+        sigma_min=sigma_min,
+        sigma_max=sigma_max,
+        device=device,
+    )
+
+    # Save artifacts for post-analysis/visualization
+    os.makedirs(outdir, exist_ok=True)
+    np.save(os.path.join(outdir, "sigma_est.npy"), sigma_est.detach().cpu().numpy())
+    np.save(os.path.join(outdir, "loss_history.npy"), np.array(loss_hist))
+    print(f"Saved sigma_est and loss history to {outdir}")
 
 
-        
+def main():
+    # Simple entrypoint with defaults; call run_training(...) directly to customize
+    run_training()
+
+
+if __name__ == "__main__":
+    main()
