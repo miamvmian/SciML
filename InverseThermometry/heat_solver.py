@@ -172,7 +172,7 @@ def compute_stable_timestep(sigma, h):
         maximum stable time step
     """
     sigma_max = torch.max(sigma)
-    tau_max = h**2 / (8 * sigma_max)  # More conservative than h^2/(4*sigma)
+    tau_max = h**2 / (4 * sigma_max)  # More conservative than h^2/(4*sigma)
     return tau_max
 
 
@@ -203,7 +203,14 @@ class HeatSolver(nn.Module):
         self.mask[idx, :] = True
         self.mask[:, idx] = True
 
-    def forward(self, T, n_steps=None, max_sigma=None, print_info=False):
+    def forward(
+        self,
+        T,
+        n_steps=None,
+        max_sigma=None,
+        print_info=False,
+        return_full_history=False,
+    ):
         """
         Solve the 2D heat equation using finite volume method.
 
@@ -211,10 +218,12 @@ class HeatSolver(nn.Module):
             T: total time
             n_steps: number of time steps (auto-computed if None)
             device: device to run computation on
+            return_full_history: if True, also return full field history [n_steps+1, M, M]
 
         Returns:
             u: final temperature field [M, M]
             u_b_history: temperature field at each time step [n_steps+1, 4*(M-1)]
+            u_history (optional): full temperature field history if return_full_history=True
         """
         # Grid setup
         self.h = 1.0 / self.M
@@ -255,8 +264,15 @@ class HeatSolver(nn.Module):
 
         # Store solution history
         u_b_history = torch.zeros((n_steps + 1, 4 * (self.M - 1)), device=self.device)
+        u_history = (
+            torch.zeros((n_steps + 1, self.M, self.M), device=self.device)
+            if return_full_history
+            else None
+        )
 
         u_b_history[0] = u[self.mask].clone()
+        if u_history is not None:
+            u_history[0] = u.clone()
 
         # Time stepping
         for k in range(n_steps):
@@ -270,7 +286,11 @@ class HeatSolver(nn.Module):
 
             # Store solution
             u_b_history[k + 1] = u[self.mask].clone()
+            if u_history is not None:
+                u_history[k + 1] = u.clone()
 
+        if return_full_history:
+            return u, u_b_history, u_history
         return u, u_b_history
 
 
