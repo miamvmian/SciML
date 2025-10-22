@@ -23,7 +23,12 @@ class InverseSolver:
         sigma_0=1,
         device='cpu'
     ):
-        self.u_b_gt = u_b_gt
+        if isinstance(device, torch.device):
+            self.device = device
+        else:
+            self.device = torch.device(device)
+
+        self.u_b_gt = u_b_gt.to(self.device)
         self.u_b_gt.requires_grad_(False)
 
         self.M = M
@@ -33,15 +38,16 @@ class InverseSolver:
         self.alpha = alpha
         self.sigma_0 = sigma_0
         self.ls = lr
-        self.device = device
-
         self.solver = HeatSolver(self.M, source_func, self.device)
 
-        self.sigma_module = sigma_module
-        self.optimizer = torch.optim.Adam(sigma_module.parameters(), lr=lr)
+        self.sigma_module = sigma_module.to(self.device)
+        self.optimizer = torch.optim.Adam(self.sigma_module.parameters(), lr=lr)
 
         if isinstance(sigma_0, torch.Tensor):
-            sigma_0.requires_grad_(False)
+            self.sigma_0 = sigma_0.to(self.device)
+            self.sigma_0.requires_grad_(False)
+        else:
+            self.sigma_0 = sigma_0
     
     def solve(self, max_iters=10000, tol=1e-3, **kwargs):
         boundary_loss_history = []
