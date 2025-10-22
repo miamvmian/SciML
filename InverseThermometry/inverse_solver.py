@@ -49,7 +49,7 @@ class InverseSolver:
         total_loss_history = []
         for i in tqdm(range(max_iters)):
             sigma = self.sigma_module()
-            _, u_b_history = self.solver(sigma, self.T, self.n_steps, **kwargs)
+            _, u_b_history, _ = self.solver(sigma, self.T, self.n_steps, **kwargs)
             
             loss_data = self.solver.h * self.solver.tau * (u_b_history - self.u_b_gt).square().sum()
             loss_reg = self.solver.h**2 * (sigma - self.sigma_0).square().sum()
@@ -63,7 +63,7 @@ class InverseSolver:
             regularization_loss_history.append(loss_reg.item())
             total_loss_history.append(loss.item())
         
-            if loss.item() < tol:
+            if total_loss_history[-1]/total_loss_history[0] < tol:
                 print(f"Converged at iteration {i}, loss: {loss.item():.6f}")
                 break
             

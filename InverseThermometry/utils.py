@@ -8,7 +8,13 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
-def r2_score(real, pred):
+def relative_rmse(pred, real):
+    rmse = torch.sqrt(torch.mean(torch.square(real - pred)))
+    mean = torch.mean(real)
+    return (rmse / mean).item()
+
+
+def r2_score(pred, real):
     mse = torch.mean(torch.square(real - pred))
     var = torch.var(real, correction=0)
     return (1.0 - mse / var).item()
