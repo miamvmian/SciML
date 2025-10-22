@@ -157,7 +157,7 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     ax2.set_title(f'{title} - 3D Surface')
     plt.colorbar(surf, ax=ax2, label='Temperature')
     plt.tight_layout()
-    plt.savefig(f"solution_{title}.png")
+    plt.savefig(f"./InverseThermometry/images/solution_{title}.png")
     plt.close()
 
 
@@ -210,7 +210,7 @@ def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Compar
     axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(f"comparison_{title}.png")
+    plt.savefig(f"./InverseThermometry/images/comparison_{title}.png")
     plt.close()
 
 
@@ -238,7 +238,7 @@ def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
     plt.legend()
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
     plt.tight_layout()
-    plt.savefig(f"convergence_{title}.png")
+    plt.savefig(f"./InverseThermometry/images/convergence_{title}.png")
     plt.close()
 
 
