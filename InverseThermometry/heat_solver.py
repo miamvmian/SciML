@@ -1,15 +1,4 @@
-"""
-Differentiable forward solver for the 2D heat equation.
-Finite-volume form with interface-averaged conductivity and explicit Euler in time.
-Boundary condition: homogeneous Neumann (zero normal flux).
-"""
-
 import torch
-import torch.nn as nn
-from tqdm import tqdm
-from typing import Optional, Literal
-
-from utils import boundary_mask, precompute_source_history
 
 
 def harmonic_average(sigma, axis):
@@ -24,16 +13,18 @@ def harmonic_average(sigma, axis):
         harmonic average at interfaces [M-1, M] or [M, M-1]
     """
     if axis == 0:  # X-direction
-        # Compute σ_{i+½,j} = 2/(1/σ_{i,j} + 1/σ_{i+1,j})
-        sigma_left = sigma[:-1, :]  # σ_{i,j}
-        sigma_right = sigma[1:, :]  # σ_{i+1,j}
+        sigma_left = sigma[:-1, :]
+        sigma_right = sigma[1:, :]
         return 2 / (1 / sigma_left + 1 / sigma_right)
 
     elif axis == 1:  # Y-direction
-        # Compute σ_{i,j+½} = 2/(1/σ_{i,j} + 1/σ_{i,j+1})
-        sigma_bottom = sigma[:, :-1]  # σ_{i,j}
-        sigma_top = sigma[:, 1:]  # σ_{i,j+1}
+        sigma_bottom = sigma[:, :-1]
+        sigma_top = sigma[:, 1:]
         return 2 / (1 / sigma_bottom + 1 / sigma_top)
+
+
+def harmonic_mean(a, b, eps=1e-12):
+    return 2.0 * a * b / (a + b + eps)
 
 
 def heat_step(u, sigma, f, h, tau):
@@ -59,7 +50,7 @@ def heat_step(u, sigma, f, h, tau):
     du_x = u[1:, :] - u[:-1, :]  # [M-1, M]
     du_y = u[:, 1:] - u[:, :-1]  # [M, M-1]
 
-    # Physical fluxes at interfaces: define q = +σ ∂u/∂n so that div(q) = ∇·(σ∇u)
+    # Physical fluxes at interfaces
     flux_x = sigma_x * (du_x / h)  # [M-1, M]
     flux_y = sigma_y * (du_y / h)  # [M, M-1]
 
@@ -76,18 +67,6 @@ def heat_step(u, sigma, f, h, tau):
     return u + tau * (div_x + div_y + f)
 
 
-def heat_steps(u, sigma, fs, h, tau):
-    evolution = []
-    for f in fs:
-        u = heat_step(u, sigma, f, h, tau)
-        evolution.append(u)
-    return torch.stack(evolution, dim=0)
-
-
-def harmonic_mean(a, b, eps=1e-12):
-    return 2.0 * a * b / (a + b + eps)
-
-
 def fv_euler_step_neumann(
     u: torch.Tensor,
     sigma: torch.Tensor,
@@ -95,9 +74,6 @@ def fv_euler_step_neumann(
     h: float,
     tau: float,
 ):
-    """
-    One explicit Euler FV step for ∂_t u + div(σ∇u) = f with Neumann BCs.
-    """
     eps = 1e-12
 
     # neighbors (interior via rolls)
@@ -130,7 +106,7 @@ def fv_euler_step_neumann(
     dD[..., 0, :] = 0.0  # bottom edge
     dU[..., -1, :] = 0.0  # top edge
 
-    # For boundary faces, use σ_face = cell value (harmonic with itself)
+    # For boundary faces, use sigma_face = cell value (harmonic with itself)
     s_iphalf_j[..., -1, :] = sigma[..., -1, :]
     s_imhalf_j[..., 0, :] = sigma[..., 0, :]
     s_ijphalf[..., :, -1] = sigma[..., :, -1]
@@ -143,192 +119,13 @@ def fv_euler_step_neumann(
     return u_next
 
 
-def compute_stable_timestep(sigma, h):
-    """
-    Compute stable time step for explicit Euler scheme.
-
-    Args:
-        sigma: conductivity field [M, M]
-        h: grid spacing
-
-    Returns:
-        maximum stable time step
-    """
-    sigma_max = torch.max(sigma)
-    tau_max = h**2 / (4 * sigma_max)
-    return tau_max
-
-
-def solve_heat_equation(sigma, source_func, M, T, n_steps=None, device="cpu"):
-    """
-    Solve the 2D heat equation using finite volume method.
-
-    Args:
-        sigma: conductivity field [M, M] with requires_grad=True
-        source_func: function f(x, y, t) that returns source term
-        M: number of grid cells per direction
-        T: total time
-        n_steps: number of time steps (auto-computed if None)
-        device: device to run computation on
-
-    Returns:
-        u_final: final temperature field [M, M]
-        u_history: temperature field at each time step [n_steps+1, M, M]
-    """
-    # Grid setup
-    h = 1.0 / M
-    x = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2  # Cell centers
-    y = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2
-
-    # Create coordinate grids
-    X, Y = torch.meshgrid(x, y, indexing="ij")
-
-    # Initialize temperature field
-    u = torch.zeros(M, M, device=device, dtype=torch.float32)
-
-    # Compute stable time step bound based on current sigma
-    tau_max = compute_stable_timestep(sigma, h)
-
-    if n_steps is None:
-        # Use 90% of maximum stable time step
-        tau = 0.9 * tau_max
-        n_steps = int(T / tau) + 1
-        tau = T / n_steps
+def solve_heat(u_init, sigma, fs, h, tau, include_init=False):
+    if include_init:
+        evolution = [u_init]
     else:
-        tau = T / n_steps
-        if tau > tau_max:
-            print(f"Warning: Time step {tau:.6f} exceeds stability limit {tau_max:.6f}")
-
-    print(f"Grid: {M}x{M}, Time step: {tau:.6f}, Steps: {n_steps}")
-
-    # Store solution history
-    u_history = torch.zeros(n_steps + 1, M, M, device=device)
-    u_history[0] = u.clone()
-
-    # Time stepping
-    for k in range(n_steps):
-        t = k * tau
-
-        # Compute source term at current time
-        f = source_func(X, Y, t)
-
-        # Single time step
+        evolution = []
+    u = u_init.clone()
+    for f in fs:
         u = heat_step(u, sigma, f, h, tau)
-
-        # Store solution
-        u_history[k + 1] = u.clone()
-
-    return u, u_history
-
-
-class HeatSolver(nn.Module):
-    """
-    PyTorch module for differentiable heat equation solver.
-    """
-
-    def __init__(self, M, source_func, device="cpu"):
-        super().__init__()
-        self.M = M
-        self.device = device
-        self.source_func = source_func
-        self.tau = None
-        self.mask = boundary_mask(self.M, self.device)
-
-    def forward(self, sigma, T, n_steps=None, max_sigma=None, print_info=False):
-        """
-        Solve the 2D heat equation using finite volume method.
-
-        Args:
-            T: total time
-            n_steps: number of time steps (auto-computed if None)
-            device: device to run computation on
-
-        Returns:
-            u: final temperature field [M, M]
-            u_b_history: temperature field at each time step [n_steps+1, 4*(M-1)]
-            u_history (optional): full temperature field history if return_full_history=True
-        """
-        # Grid setup
-        self.h = 1.0 / self.M
-        x = (
-            torch.linspace(0, 1, self.M + 1, device=self.device)[:-1] + self.h / 2
-        )  # Cell centers
-        y = torch.linspace(0, 1, self.M + 1, device=self.device)[:-1] + self.h / 2
-
-        # Create coordinate grids
-        X, Y = torch.meshgrid(x, y, indexing="ij")
-
-        sigma = sigma.to(self.device)
-
-        # Initialize temperature field
-        u = torch.zeros(self.M, self.M, device=self.device, dtype=torch.float32)
-
-        # Compute stable time step
-        tau_max = compute_stable_timestep(sigma, self.h)
-
-        if n_steps is None and max_sigma is None:
-            self.tau = tau_max
-            n_steps = int(T / self.tau) + 1
-            if print_info:
-                print(f"N time steps {n_steps}")
-            self.tau = T / n_steps
-        elif n_steps is not None:
-            self.tau = T / n_steps
-            if self.tau > tau_max:
-                print(
-                    f"Warning: Time step {self.tau:.6f} exceeds stability limit {tau_max:.6f}"
-                )
-        elif max_sigma is not None:
-            self.tau = self.h**2 / (8 * max_sigma)
-            n_steps = int(T / self.tau) + 1
-            self.tau = T / n_steps
-
-        if print_info:
-            print(
-                f"Grid: {self.M}x{self.M}, Time step: {self.tau:.6f}, Steps: {n_steps}"
-            )
-
-        # Store solution history
-        u_history = torch.zeros((n_steps + 1, self.M, self.M), device=self.device)
-        u_b_history = torch.zeros((n_steps + 1, 4 * (self.M - 1)), device=self.device)
-
-        u_history[0] = u.clone()
-        u_b_history[0] = u[self.mask].clone()
-
-        # Time stepping
-        for k in range(n_steps):
-            t = k * self.tau
-
-            # Compute source term at current time
-            f = self.source_func(X, Y, t)
-
-            # Single time step
-            u = heat_step(u, sigma, f, self.h, self.tau)
-
-            # Store solution
-            u_history[k + 1] = u.clone()
-            u_b_history[k + 1] = u[self.mask].clone()
-            if u_history is not None:
-                u_history[k + 1] = u.clone()
-
-        return u, u_b_history, u_history
-
-
-def solve_heat_equation(sigma, source, M, T, device="cpu"):
-    """
-    Solve the heat equation for verification test case.
-
-    Args:
-        sigma: conductivity field [M, M]
-        verification_source: source term function
-        M: grid size
-        T: total time
-        device: device to run computation on
-    Returns:
-        u_final: final temperature field [M, M]
-        u_b_history: temperature field at each time step [n_steps+1, M, M]
-    """
-
-    solver = HeatSolver(M, source, device)
-    u_final, u_b_history, u_history = solver(sigma, T, print_info=True)
-    return u_final, u_b_history, u_history
+        evolution.append(u)
+    return torch.stack(evolution, dim=0)
