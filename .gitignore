@@ -3,3 +3,6 @@
 !/InverseThermometry/  # track this folder
 .DS_Store
 .envrc       # project-specific environment activation
+__pycache__/
+data/
+results/
