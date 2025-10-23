@@ -9,6 +9,8 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import Optional, Literal
 
+from utils import boundary_mask, precompute_source_history
+
 
 def harmonic_average(sigma, axis):
     """
@@ -36,7 +38,8 @@ def harmonic_average(sigma, axis):
 
 def heat_step(u, sigma, f, h, tau):
     """
-    Legacy function: Single time step of the heat equation using finite difference method.
+    Single explicit Euler step with interface-averaged conductivity (finite-volume form).
+    Uses harmonic averages at cell faces and zero normal flux at domain boundaries.
 
     Args:
         u: temperature field [M, M]
@@ -48,54 +51,37 @@ def heat_step(u, sigma, f, h, tau):
     Returns:
         updated temperature field [M, M]
     """
-    M = u.shape[0]
+    # Conductivity at interfaces via harmonic average
+    sigma_x = harmonic_average(sigma, axis=0)  # [M-1, M] between i and i+1 at fixed j
+    sigma_y = harmonic_average(sigma, axis=1)  # [M, M-1] between j and j+1 at fixed i
 
-    # Apply boundary conditions with ghost cells
-    u_bc = _apply_neumann_bc(u)  # [M+2, M+2]
+    # Differences of u across interfaces (centered jumps)
+    du_x = u[1:, :] - u[:-1, :]  # [M-1, M]
+    du_y = u[:, 1:] - u[:, :-1]  # [M, M-1]
 
-    # Initialize updated temperature
-    u_new = u.clone()
+    # Physical fluxes at interfaces: define q = +σ ∂u/∂n so that div(q) = ∇·(σ∇u)
+    flux_x = sigma_x * (du_x / h)  # [M-1, M]
+    flux_y = sigma_y * (du_y / h)  # [M, M-1]
 
-    # Use finite difference method: ∂u/∂t = ∇·(σ∇u) + f
-    # ∇·(σ∇u) = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y)
+    # Neumann BC (zero normal flux): pad interface flux arrays with zeros at boundaries
+    flux_x_pad = torch.zeros(u.shape[0] + 1, u.shape[1], dtype=u.dtype, device=u.device)
+    flux_x_pad[1:-1, :] = flux_x
+    div_x = (flux_x_pad[1:, :] - flux_x_pad[:-1, :]) / h  # [M, M]
 
-    for i in range(M):
-        for j in range(M):
-            # X-direction: ∂/∂x(σ ∂u/∂x)
-            # Central difference for ∂u/∂x at cell centers
-            if i == 0:  # Left boundary
-                du_dx_right = (u_bc[i + 2, j + 1] - u_bc[i + 1, j + 1]) / h
-                du_dx_left = 0  # Neumann BC: ∂u/∂x = 0
-            elif i == M - 1:  # Right boundary
-                du_dx_right = 0  # Neumann BC: ∂u/∂x = 0
-                du_dx_left = (u_bc[i + 1, j + 1] - u_bc[i, j + 1]) / h
-            else:  # Interior
-                du_dx_right = (u_bc[i + 2, j + 1] - u_bc[i + 1, j + 1]) / h
-                du_dx_left = (u_bc[i + 1, j + 1] - u_bc[i, j + 1]) / h
+    flux_y_pad = torch.zeros(u.shape[0], u.shape[1] + 1, dtype=u.dtype, device=u.device)
+    flux_y_pad[:, 1:-1] = flux_y
+    div_y = (flux_y_pad[:, 1:] - flux_y_pad[:, :-1]) / h  # [M, M]
 
-            # Y-direction: ∂/∂y(σ ∂u/∂y)
-            if j == 0:  # Bottom boundary
-                du_dy_top = (u_bc[i + 1, j + 2] - u_bc[i + 1, j + 1]) / h
-                du_dy_bottom = 0  # Neumann BC: ∂u/∂y = 0
-            elif j == M - 1:  # Top boundary
-                du_dy_top = 0  # Neumann BC: ∂u/∂y = 0
-                du_dy_bottom = (u_bc[i + 1, j + 1] - u_bc[i + 1, j]) / h
-            else:  # Interior
-                du_dy_top = (u_bc[i + 1, j + 2] - u_bc[i + 1, j + 1]) / h
-                du_dy_bottom = (u_bc[i + 1, j + 1] - u_bc[i + 1, j]) / h
+    # Explicit Euler update
+    return u + tau * (div_x + div_y + f)
 
-            # Compute divergence: ∇·(σ∇u) = ∂/∂x(σ ∂u/∂x) + ∂/∂y(σ ∂u/∂y)
-            # harmoic_sigma_x = harmonic_average(sigma, axis=0)
-            # harmoic_sigma_y = harmonic_average(sigma, axis=0)
 
-            div_sigma_grad_u = (
-                sigma[i, j] * du_dx_right - sigma[i, j] * du_dx_left
-            ) / h + (sigma[i, j] * du_dy_top - sigma[i, j] * du_dy_bottom) / h
-
-            # Update temperature: ∂u/∂t = ∇·(σ∇u) + f
-            u_new[i, j] = u[i, j] + tau * (div_sigma_grad_u + f[i, j])
-
-    return u_new
+def heat_steps(u, sigma, fs, h, tau):
+    evolution = []
+    for f in fs:
+        u = heat_step(u, sigma, f, h, tau)
+        evolution.append(u)
+    return torch.stack(evolution, dim=0)
 
 
 def harmonic_mean(a, b, eps=1e-12):
@@ -103,19 +89,15 @@ def harmonic_mean(a, b, eps=1e-12):
 
 
 def fv_euler_step_neumann(
-    u: torch.Tensor,  # [B,H,W]  u^k
-    sigma: torch.Tensor,  # [B,H,W]
-    f: torch.Tensor,  # [B,H,W]  source at t_k
+    u: torch.Tensor,
+    sigma: torch.Tensor,
+    f: torch.Tensor,
     h: float,
     tau: float,
 ):
     """
     One explicit Euler FV step for ∂_t u + div(σ∇u) = f with Neumann BCs.
     """
-    assert u.shape == sigma.shape == f.shape and u.ndim in [
-        2,
-        3,
-    ], "Input tensors must have the same shape [B,H,W] or [H,W]"
     eps = 1e-12
 
     # neighbors (interior via rolls)
@@ -173,7 +155,6 @@ def compute_stable_timestep(sigma, h):
         maximum stable time step
     """
     sigma_max = torch.max(sigma)
-    # Conservative constant for variable-coefficient diffusion
     tau_max = h**2 / (4 * sigma_max)
     return tau_max
 
@@ -245,36 +226,15 @@ class HeatSolver(nn.Module):
     PyTorch module for differentiable heat equation solver.
     """
 
-    def __init__(self, sigma_0, M, source_func, device="cpu"):
+    def __init__(self, M, source_func, device="cpu"):
         super().__init__()
         self.M = M
         self.device = device
-
-        if isinstance(sigma_0, (int, float)):
-            sigma = torch.full(
-                (M, M), fill_value=sigma_0, dtype=torch.float32, device=device
-            )
-        elif isinstance(sigma_0, torch.Tensor):
-            sigma = sigma_0.clone().to(device)
-        self.sigma = nn.Parameter(sigma, requires_grad=True)
-
         self.source_func = source_func
-
         self.tau = None
+        self.mask = boundary_mask(self.M, self.device)
 
-        idx = torch.tensor([0, -1], device=self.device)
-        self.mask = torch.zeros((self.M, self.M), dtype=torch.bool, device=self.device)
-        self.mask[idx, :] = True
-        self.mask[:, idx] = True
-
-    def forward(
-        self,
-        T,
-        n_steps=None,
-        max_sigma=None,
-        print_info=False,
-        return_full_history=False,
-    ):
+    def forward(self, sigma, T, n_steps=None, max_sigma=None, print_info=False):
         """
         Solve the 2D heat equation using finite volume method.
 
@@ -282,7 +242,6 @@ class HeatSolver(nn.Module):
             T: total time
             n_steps: number of time steps (auto-computed if None)
             device: device to run computation on
-            return_full_history: if True, also return full field history [n_steps+1, M, M]
 
         Returns:
             u: final temperature field [M, M]
@@ -299,11 +258,13 @@ class HeatSolver(nn.Module):
         # Create coordinate grids
         X, Y = torch.meshgrid(x, y, indexing="ij")
 
+        sigma = sigma.to(self.device)
+
         # Initialize temperature field
         u = torch.zeros(self.M, self.M, device=self.device, dtype=torch.float32)
 
         # Compute stable time step
-        tau_max = compute_stable_timestep(self.sigma, self.h)
+        tau_max = compute_stable_timestep(sigma, self.h)
 
         if n_steps is None and max_sigma is None:
             self.tau = tau_max
@@ -320,6 +281,7 @@ class HeatSolver(nn.Module):
         elif max_sigma is not None:
             self.tau = self.h**2 / (8 * max_sigma)
             n_steps = int(T / self.tau) + 1
+            self.tau = T / n_steps
 
         if print_info:
             print(
@@ -327,16 +289,11 @@ class HeatSolver(nn.Module):
             )
 
         # Store solution history
+        u_history = torch.zeros((n_steps + 1, self.M, self.M), device=self.device)
         u_b_history = torch.zeros((n_steps + 1, 4 * (self.M - 1)), device=self.device)
-        u_history = (
-            torch.zeros((n_steps + 1, self.M, self.M), device=self.device)
-            if return_full_history
-            else None
-        )
 
+        u_history[0] = u.clone()
         u_b_history[0] = u[self.mask].clone()
-        if u_history is not None:
-            u_history[0] = u.clone()
 
         # Time stepping
         for k in range(n_steps):
@@ -346,19 +303,18 @@ class HeatSolver(nn.Module):
             f = self.source_func(X, Y, t)
 
             # Single time step
-            u = fv_euler_step_neumann(u, self.sigma, f, self.h, self.tau)
+            u = heat_step(u, sigma, f, self.h, self.tau)
 
             # Store solution
+            u_history[k + 1] = u.clone()
             u_b_history[k + 1] = u[self.mask].clone()
             if u_history is not None:
                 u_history[k + 1] = u.clone()
 
-        if return_full_history:
-            return u, u_b_history, u_history
-        return u, u_b_history
+        return u, u_b_history, u_history
 
 
-def solve_heat_equation(sigma, verification_source, M, T, device="cpu"):
+def solve_heat_equation(sigma, source, M, T, device="cpu"):
     """
     Solve the heat equation for verification test case.
 
@@ -373,6 +329,6 @@ def solve_heat_equation(sigma, verification_source, M, T, device="cpu"):
         u_b_history: temperature field at each time step [n_steps+1, M, M]
     """
 
-    solver = HeatSolver(sigma, M, verification_source, device)
-    u_final, u_b_history = solver(T=T, print_info=True)
-    return u_final, u_b_history
+    solver = HeatSolver(M, source, device)
+    u_final, u_b_history, u_history = solver(sigma, T, print_info=True)
+    return u_final, u_b_history, u_history

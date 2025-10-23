@@ -4,17 +4,61 @@ Includes reference solutions/sources, error metrics, plotting helpers,
 conductivity field generators, and informative printing utilities.
 """
 
+from IPython.display import display, HTML
+from matplotlib.animation import FuncAnimation
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 
-def create_conductivity_field(M, pattern="constant", device="cpu"):
+def relative_rmse(pred, real):
+    rmse = torch.sqrt(torch.mean(torch.square(real - pred)))
+    mean = torch.mean(real)
+    return (rmse / mean).item()
+
+
+def r2_score(pred, real):
+    mse = torch.mean(torch.square(real - pred))
+    var = torch.var(real, correction=0)
+    return (1.0 - mse / var).item()
+
+
+def boundary_mask(M, device):
+    # Boundary indicator with True at the domain boundary
+    # Order matters for downstream stacking/slicing consistency.
+    mask = torch.zeros(M, M, dtype=torch.bool, device=device)
+    mask[0, :] = mask[-1, :] = mask[:, 0] = mask[:, -1] = True
+    return mask
+
+
+class SimpleSigma(torch.nn.Module):
+    def __init__(self, M, sigma_0):
+        super().__init__()
+        self.sigma = torch.nn.Parameter(
+            torch.randn(M, M) * 0.1 + sigma_0, requires_grad=True
+        )
+
+    def forward(self):
+        return self.sigma
+
+
+class SigmoidSigma(torch.nn.Module):
+    def __init__(self, M, min_sigma, max_sigma):
+        super().__init__()
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+        self.sigma_param = torch.nn.Parameter(torch.rand(M, M))
+
+    def forward(self):
+        return (
+            torch.sigmoid(self.sigma_param) * (self.max_sigma - self.min_sigma)
+            + self.min_sigma
+        )
+
+
+def create_conductivity_field(M=10, pattern="constant", device="cpu"):
     """
-    Apply Neumann boundary conditions (zero gradient at boundaries).
-    Build a ghost-cell padding with symmetric extension so that
-    ∂u/∂n = 0 at the domain boundary.
+    Create different conductivity field patterns for testing.
 
     Args:
         M: grid size
@@ -44,6 +88,81 @@ def create_conductivity_field(M, pattern="constant", device="cpu"):
         raise ValueError(f"Unknown pattern: {pattern}")
 
     return sigma
+
+
+def sine_source(
+    x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float
+):
+    if isinstance(t, (int, float)):
+        t_tensor = torch.tensor([t], dtype=x.dtype, device=x.device)
+        sine = torch.sin(omega * t_tensor)
+    else:
+        t_tensor = t.to(x.device)
+        sine = torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1))
+    return sine * torch.ones_like(x, device=x.device)
+
+
+def sine_gauss_source(
+    x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float
+):
+    if isinstance(t, (int, float)):
+        t_tensor = torch.tensor([t], dtype=x.dtype, device=x.device)
+        return torch.sin(omega * t_tensor).abs() * torch.exp(
+            -0.5 * ((x - 0.5) ** 2 + (y - 0.5) ** 2) * 6
+        )
+    else:
+        t_tensor = t.to(x.device)
+        return torch.sin(
+            omega * t_tensor.unsqueeze(-1).unsqueeze(-1)
+        ).abs() * torch.exp(-0.5 * ((x - 0.5) ** 2 - (y - 0.5) ** 2) * 6)
+
+
+def sine_sine_source(
+    x: torch.Tensor, y: torch.Tensor, t: torch.Tensor | float, omega: float
+):
+    if isinstance(t, (int, float)):
+        t_tensor = torch.tensor([t], dtype=x.dtype, device=x.device)
+        return (torch.sin(omega * t_tensor) + 1) * (
+            torch.sin(2 * omega * x) * torch.sin(2 * omega * y) + 1
+        )
+    else:
+        t_tensor = t.to(x.device)
+        return (torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1)) + 1) * (
+            torch.sin(2 * omega * x) * torch.sin(2 * omega * y) + 1
+        )
+
+
+def sine_cosine_source(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    t: torch.Tensor | float,
+    omega: float,
+    device: str | torch.device | None = None,
+):
+    if isinstance(device, torch.device):
+        target_device = device
+    elif isinstance(device, str):
+        target_device = torch.device(device)
+    else:
+        target_device = x.device
+
+    x_local = x.to(target_device)
+    y_local = y.to(target_device)
+
+    if isinstance(t, (int, float)):
+        t_tensor = torch.tensor([t], dtype=x_local.dtype, device=target_device)
+        return (
+            (torch.sin(omega * t_tensor) + 1)
+            * torch.cos(np.pi * x_local)
+            * torch.cos(np.pi * y_local)
+        )
+    else:
+        t_tensor = t.to(target_device)
+        return (
+            (torch.sin(omega * t_tensor.unsqueeze(-1).unsqueeze(-1)) + 1)
+            * torch.cos(np.pi * x_local)
+            * torch.cos(np.pi * y_local)
+        )
 
 
 def create_source_function(pattern="constant", device="cpu"):
@@ -192,7 +311,7 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
-    # 2D contour plot at cell centers
+    # 2D contour plot
     im1 = ax1.contourf(x, y, u, levels=20, cmap="viridis")
     ax1.set_xlabel("x")
     ax1.set_ylabel("y")
@@ -207,7 +326,6 @@ def visualize_solution(u, x, y, title="Temperature Field", figsize=(10, 8)):
     ax2.set_ylabel("y")
     ax2.set_zlabel("Temperature")
     ax2.set_title(f"{title} - 3D Surface")
-    plt.colorbar(surf, ax=ax2, label="Temperature")
     plt.tight_layout()
     plt.savefig(f"./InverseThermometry/images/solution_{title}.png")
     plt.close()
@@ -269,25 +387,25 @@ def visualize_comparison(u_numerical, u_analytical, x, y, title="Solution Compar
     axes[1, 0].set_aspect("equal")
     plt.colorbar(im3, ax=axes[1, 0], label="Error")
 
-    # Cross-section at mid y (slice along fixed column index for 'ij' meshgrid)
-    y_idx = y.shape[1] // 2
+    # Cross-section at y = 0.5
+    y_mid = y.shape[0] // 2
     axes[1, 1].plot(
-        x[:, y_idx].detach().numpy(),
-        u_numerical[:, y_idx].detach().numpy(),
+        x[y_mid, :].detach().numpy(),
+        u_numerical[y_mid, :].detach().numpy(),
         "b-",
         label="Numerical",
         linewidth=2,
     )
     axes[1, 1].plot(
-        x[:, y_idx].detach().numpy(),
-        u_analytical[:, y_idx].detach().numpy(),
+        x[y_mid, :].detach().numpy(),
+        u_analytical[y_mid, :].detach().numpy(),
         "r--",
         label="Analytical",
         linewidth=2,
     )
     axes[1, 1].set_xlabel("x")
     axes[1, 1].set_ylabel("Temperature")
-    axes[1, 1].set_title(f"Cross-section at y = {y[0, y_idx]:.2f}")
+    axes[1, 1].set_title(f"Cross-section at y = {y[y_mid, 0]:.2f}")
     axes[1, 1].legend()
     axes[1, 1].grid(True, alpha=0.3)
 
@@ -311,7 +429,7 @@ def plot_convergence_analysis(h_values, errors, title="Convergence Analysis"):
         h_values, errors, "bo-", linewidth=2, markersize=8, label="Numerical Error"
     )
 
-    # Reference lines for expected convergence slopes
+    # Reference lines for convergence rates
     h_ref = np.array(h_values)
     plt.loglog(h_ref, h_ref, "r--", alpha=0.7, label="O(h)")
     plt.loglog(h_ref, h_ref**2, "g--", alpha=0.7, label="O(h²)")
@@ -350,3 +468,118 @@ def print_solver_info(M, T, tau, n_steps, sigma_max):
     print(f"Stability limit: τ_max = {1.0/(4*M**2*sigma_max):.6f}")
     print(f"CFL number: {tau * 4 * sigma_max * M**2:.4f}")
     print("=" * 50)
+
+
+def precompute_source_history(source_func, M, n_frames, tau, device):
+    h = 1.0 / M
+    x = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2  # Cell centers
+    y = torch.linspace(0, 1, M + 1, device=device)[:-1] + h / 2
+
+    # Create coordinate grids
+    X, Y = torch.meshgrid(x, y, indexing="ij")
+
+    ts = torch.arange(n_frames, device=device) * tau
+
+    with torch.no_grad():
+        source_history = torch.stack([source_func(X, Y, t) for t in ts], dim=0)
+
+    return source_history
+
+
+def compare(u_history, u_gt_history, source_history, tau):
+    # --- Original number of frames ---
+    n_frames_full = u_history.shape[0]
+
+    # --- Downscale to 100 evenly spaced frames if needed ---
+    if n_frames_full > 100:
+        idx = torch.linspace(0, n_frames_full - 1, 100).long()
+        u_history = u_history[idx]
+        u_gt_history = u_gt_history[idx]
+        source_history = source_history[idx]
+        # Use real times corresponding to selected frames
+        ts = idx.to(torch.float32) * tau
+    else:
+        ts = torch.arange(n_frames_full, device=u_history.device) * tau
+
+    n_frames = u_history.shape[0]
+
+    # --- Convert to NumPy ---
+    u_sim_np = u_history.detach().cpu().numpy()
+    u_gt_np = u_gt_history.detach().cpu().numpy()
+    residual_np = (u_history - u_gt_history).detach().cpu().numpy()
+    source_np = source_history.detach().cpu().numpy()
+    times_np = ts.detach().cpu().numpy()
+
+    # --- Value limits ---
+    vmin = float(min(u_sim_np.min(), u_gt_np.min()))
+    vmax = float(max(u_sim_np.max(), u_gt_np.max()))
+    res_lim = float(np.max(np.abs(residual_np))) or 1e-12
+    source_lim = float(np.max(np.abs(source_np))) or 1e-12
+    extent = [0.0, 1.0, 0.0, 1.0]
+
+    # --- Figure setup ---
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+
+    im_sim = axes[0].imshow(
+        u_sim_np[0], cmap="viridis", origin="lower", extent=extent, vmin=vmin, vmax=vmax
+    )
+    axes[0].set_title("Simulation")
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y")
+    fig.colorbar(im_sim, ax=axes[0], fraction=0.046, pad=0.04, label="Temperature")
+
+    im_gt = axes[1].imshow(
+        u_gt_np[0], cmap="viridis", origin="lower", extent=extent, vmin=vmin, vmax=vmax
+    )
+    axes[1].set_title("Ground Truth")
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+    fig.colorbar(im_gt, ax=axes[1], fraction=0.046, pad=0.04, label="Temperature")
+
+    im_res = axes[2].imshow(
+        residual_np[0],
+        cmap="RdBu_r",
+        origin="lower",
+        extent=extent,
+        vmin=-res_lim,
+        vmax=res_lim,
+    )
+    axes[2].set_title("Residual (Simulation - Truth)")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    fig.colorbar(im_res, ax=axes[2], fraction=0.046, pad=0.04, label="Residual")
+
+    im_src = axes[3].imshow(
+        source_np[0],
+        cmap="RdBu_r",
+        origin="lower",
+        extent=extent,
+        vmin=-source_lim,
+        vmax=source_lim,
+    )
+    axes[3].set_title("Source Term")
+    axes[3].set_xlabel("x")
+    axes[3].set_ylabel("y")
+    fig.colorbar(im_src, ax=axes[3], fraction=0.046, pad=0.04, label="Source")
+
+    time_text = fig.suptitle(f"t = {times_np[0]:.3f}")
+
+    # --- Animation update ---
+    def _update(frame):
+        im_sim.set_data(u_sim_np[frame])
+        im_gt.set_data(u_gt_np[frame])
+        im_res.set_data(residual_np[frame])
+        im_src.set_data(source_np[frame])
+        time_text.set_text(f"t = {times_np[frame]:.3f}")
+        return im_sim, im_gt, im_res, im_src
+
+    anim = FuncAnimation(
+        fig,
+        _update,
+        frames=n_frames,
+        interval=120,
+        blit=False,
+    )
+
+    display(HTML(anim.to_jshtml()))
+    plt.close(fig)
