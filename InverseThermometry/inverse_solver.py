@@ -156,7 +156,7 @@ def optimize_conductivity_from_dataset(
 
             loss.backward()
             # Optional diagnostics: gradient norm should be > 0 and not explode
-            print(f"grad norm: {sigma_param.grad.norm().item():.6e}")
+            # print(f"grad norm: {sigma_param.grad.norm().item():.6e}")
             optimizer.step()
 
             loss_history.append(float(loss.detach().cpu()))
