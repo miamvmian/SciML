@@ -36,4 +36,9 @@ def estimate_conductivity(
         loss.backward()
         optimizer.step()
 
-        yield sigma_field(), u_history, loss_data.item(), loss_reg.item(), loss.item()
+        li = loss.item()
+
+        if li != li:
+            break  # exit early if nan
+
+        yield sigma_field(), u_history, loss_data.item(), loss_reg.item(), li
