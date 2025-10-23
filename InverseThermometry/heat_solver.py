@@ -76,7 +76,11 @@ def heat_step(u, sigma, f, h, tau):
 
 
 def heat_steps(u, sigma, fs, h, tau):
-    return torch.stack([heat_step(u, sigma, f, h, tau) for f in fs], dim=0)
+    evolution = []
+    for f in fs:
+        u = heat_step(u, sigma, f, h, tau)
+        evolution.append(u)
+    return torch.stack(evolution, dim=0)
 
 
 def harmonic_mean(a, b, eps=1e-12):

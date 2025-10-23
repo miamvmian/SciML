@@ -505,7 +505,7 @@ def compare(u_history, u_gt_history, source_history, tau):
     im_gt = axes[1].imshow(
         u_gt_np[0], cmap="viridis", origin="lower", extent=extent, vmin=vmin, vmax=vmax
     )
-    axes[1].set_title("Analytical Ground Truth")
+    axes[1].set_title("Ground Truth")
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("y")
     fig.colorbar(im_gt, ax=axes[1], fraction=0.046, pad=0.04, label="Temperature")
