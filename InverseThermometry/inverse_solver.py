@@ -36,6 +36,4 @@ def estimate_conductivity(
         loss.backward()
         optimizer.step()
 
-        # TODO: also calc some metrics
-
-        yield loss_data.item(), loss_reg.item(), loss.item()
+        yield sigma_field(), u_history, loss_data.item(), loss_reg.item(), loss.item()
