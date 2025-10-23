@@ -1,6 +1,6 @@
-/*           # ignore everything at the repo root
-!/.gitignore # keep this file
-!/InverseThermometry/  # track this folder
+# /*           # ignore everything at the repo root
+# !/.gitignore # keep this file
+# !/InverseThermometry/  # track this folder
 .DS_Store
 .envrc       # project-specific environment activation
 __pycache__/
