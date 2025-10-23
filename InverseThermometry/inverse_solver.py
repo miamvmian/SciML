@@ -1,7 +1,6 @@
 import torch
 
 from heat_solver import solve_heat
-from utils import boundary_mask
 
 
 def estimate_conductivity(
