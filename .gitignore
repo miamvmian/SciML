@@ -2,3 +2,4 @@
 !/.gitignore # keep this file
 !/InverseThermometry/  # track this folder
 .DS_Store
+.envrc       # project-specific environment activation
