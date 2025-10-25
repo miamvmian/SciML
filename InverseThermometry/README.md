@@ -489,7 +489,7 @@ If you use this code in your research, please cite:
 ```bibtex
 @software{inverse_thermometry,
   title = {Inverse Thermometry: Differentiable Heat Solver for Conductivity Estimation},
-  author = {miamvmian},
+  author = {L. Qian and O. Kashurin and V. Makhonin and N. Yavich},
   year = {2025},
   url = {https://github.com/miamvmian/SciML/tree/main//InverseThermometry}
 }
@@ -502,8 +502,8 @@ This project is licensed under the MIT License - see LICENSE file for details.
 ## Contact
 
 For questions, issues, or contributions:
-- **Email**: your.email@example.com
-- **GitHub Issues**: [Project Issues](https://github.com/yourusername/InverseThermometry/issues)
+- **Authors**: [Lujiang Qian](mailto:lujiang.qian@skoltech.ru), [Nikolay Yavich](mailto:n.yavich@skoltech.ru)
+- **GitHub Issues**: [Project Issues](https://github.com/miamvmian/SciML/issues)
 
 ## Acknowledgments
 
