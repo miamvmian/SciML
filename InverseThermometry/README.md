@@ -488,8 +488,8 @@ If you use this code in your research, please cite:
 
 ```bibtex
 @software{inverse_thermometry,
-  title = {Inverse Thermometry: Differentiable Heat Solver for Conductivity Estimation},
-  author = {L. Qian and O. Kashurin and V. Makhonin and N. Yavich},
+  title = {The Inverse Problem of Thermometry: Conductivity Reconstruction},
+  author = {L. Qian, V. Fedotov and N. Yavich},
   year = {2025},
   url = {https://github.com/miamvmian/SciML/tree/main//InverseThermometry}
 }
