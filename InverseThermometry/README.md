@@ -1,4 +1,4 @@
-# The Inverse Problem of Thermometry: Conductivity Reconstruciton
+# The Inverse Problem of Thermometry: Heat Conductivity Reconstruciton
 
 A complete PyTorch-based implementation for solving the inverse problem of estimating spatially-varying thermal conductivity from noisy boundary temperature measurements using a differentiable finite volume heat solver.
 
@@ -403,15 +403,6 @@ Gradient norm: 0.000000
 **Solution**: Check conductivity bounds and initialization
 ```python
 optimize_conductivity_from_dataset(..., sigma_min=0.5, sigma_max=5.0)
-```
-
-**4. Memory Issues**
-```
-CUDA out of memory
-```
-**Solution**: Reduce grid size or use CPU
-```python
-solve_heat_equation(sigma, source_func, M=20, T=1.0, device='cpu')
 ```
 
 ## Theory and Background
