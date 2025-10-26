@@ -1,4 +1,4 @@
-# Inverse Thermometry: Thermal Conductivity Estimation from Boundary Measurements
+# The Inverse Problem of Thermometry: Conductivity Reconstruciton
 
 A complete PyTorch-based implementation for solving the inverse problem of estimating spatially-varying thermal conductivity from noisy boundary temperature measurements using a differentiable finite volume heat solver.
 
@@ -164,7 +164,7 @@ sigma_est, loss_history = optimize_conductivity_from_dataset(
     alpha=1e-3,              # Regularization parameter
     sigma0=2.0,              # Prior conductivity
     sigma_min=0.1,           # Lower bound
-    sigma_max=3.0,           # Upper bound
+    sigma_max=5.0,           # Upper bound
     device='cpu'
 )
 
@@ -414,22 +414,6 @@ CUDA out of memory
 solve_heat_equation(sigma, source_func, M=20, T=1.0, device='cpu')
 ```
 
-## Performance
-
-### Computational Complexity
-- **Forward solve**: O(M² × n_steps)
-- **Gradient computation**: O(M² × n_steps) via autograd
-- **Memory**: O(M² × n_steps) for history storage
-
-### Typical Runtimes (CPU)
-| Grid Size | Time Steps | Forward Solve | Inverse (100 iters) |
-|-----------|------------|---------------|---------------------|
-| 10×10     | 100        | 0.1s          | 10s                 |
-| 20×20     | 200        | 0.5s          | 50s                 |
-| 50×50     | 500        | 5s            | 500s                |
-
-*Measured on Intel i7 @ 2.6GHz*
-
 ## Theory and Background
 
 ### Why Finite Volume Method?
@@ -488,8 +472,8 @@ If you use this code in your research, please cite:
 
 ```bibtex
 @software{inverse_thermometry,
-  title = {The Inverse Problem of Thermometry: Conductivity Reconstruction},
-  author = {L. Qian, V. Fedotov and N. Yavich},
+  title = {The Inverse Problem of Thermometry: Heat Conductivity Reconstruction},
+  author = { Qian, L., Fedotov, V. and Yavich, N.},
   year = {2025},
   url = {https://github.com/miamvmian/SciML/tree/main//InverseThermometry}
 }
@@ -507,10 +491,15 @@ For questions, issues, or contributions:
 
 ## Acknowledgments
 
-This implementation was developed as part of a scientific machine learning course project, combining classical numerical methods with modern automatic differentiation frameworks.
+This implementation was developed as part of a scientific machine learning course project at Skotlech, combining classical numerical methods with modern automatic differentiation frameworks.
 
 ---
 
 **Last Updated**: October 2025  
 **Version**: 1.0.0  
-**Status**: Production Ready 
+## Additional References
+
+- Yavich, N., Burnaev, E., Vanovskiy, V. (2025) Stability of the DuFort–Frankel Scheme on Unstructured Grids. Computation, 13(10), 246.
+- Malovichko, M. S., Yavich, N. B., Razorenova, A. M., Koshev, N. A. (2024). PDE-constrained optimization for electroencephalographic source reconstruction. arXiv:2411.04155. [https://arxiv.org/pdf/2204.06622](https://arxiv.org/pdf/2204.06622)
+- Shumilin, S., Ryabov, A., Yavich, N., and Burnaev, E., Vanovskiy, V. (2024). Self-Supervised Coarsening of Unstructured Grid with Automatic Differentiation. Geophysical Proceedings of Machine Learning Research, 235. [https://arxiv.org/abs/2507.18297](https://arxiv.org/abs/2507.18297)
+
