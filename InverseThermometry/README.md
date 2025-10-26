@@ -1,4 +1,4 @@
-# The Inverse Problem of Thermometry: Heat Conductivity Reconstruciton
+# The Inverse Problem of Thermometry: Heat Conductivity Reconstruction
 
 A complete PyTorch-based implementation for solving the inverse problem of estimating spatially-varying thermal conductivity from noisy boundary temperature measurements using a differentiable finite volume heat solver.
 
@@ -464,9 +464,9 @@ If you use this code in your research, please cite:
 ```bibtex
 @software{inverse_thermometry,
   title = {The Inverse Problem of Thermometry: Heat Conductivity Reconstruction},
-  author = { Qian, L., Fedotov, V. and Yavich, N.},
+  author = {Qian, L., Kashurin, O., Makhonin, V., Fedotov, V. and Yavich, N.},
   year = {2025},
-  url = {https://github.com/miamvmian/SciML/tree/main//InverseThermometry}
+  url = {https://github.com/miamvmian/SciML/tree/main/InverseThermometry}
 }
 ```
 
@@ -482,7 +482,7 @@ For questions, issues, or contributions:
 
 ## Acknowledgments
 
-This implementation was developed as part of a scientific machine learning course project at Skotlech, combining classical numerical methods with modern automatic differentiation frameworks.
+This implementation was developed as part of a scientific machine learning course project at Skoltech, combining classical numerical methods with modern automatic differentiation frameworks.
 
 ---
 
@@ -490,7 +490,7 @@ This implementation was developed as part of a scientific machine learning cours
 **Version**: 1.0.0  
 ## Additional References
 
-- Yavich, N., Burnaev, E., Vanovskiy, V. (2025) Stability of the DuFort–Frankel Scheme on Unstructured Grids. Computation, 13(10), 246.
+- Yavich, N., Burnaev, E., Vanovskiy, V. (2025). Stability of the DuFort–Frankel Scheme on Unstructured Grids. Computation, 13(10), 246. [https://www.mdpi.com/2079-3197/13/10/246](https://www.mdpi.com/2079-3197/13/10/246)
 - Malovichko, M. S., Yavich, N. B., Razorenova, A. M., Koshev, N. A. (2024). PDE-constrained optimization for electroencephalographic source reconstruction. arXiv:2411.04155. [https://arxiv.org/pdf/2204.06622](https://arxiv.org/pdf/2204.06622)
-- Shumilin, S., Ryabov, A., Yavich, N., and Burnaev, E., Vanovskiy, V. (2024). Self-Supervised Coarsening of Unstructured Grid with Automatic Differentiation. Geophysical Proceedings of Machine Learning Research, 235. [https://arxiv.org/abs/2507.18297](https://arxiv.org/abs/2507.18297)
+- Shumilin, S., Ryabov, A., Yavich, N., Burnaev, E., Vanovskiy, V. (2024). Self-Supervised Coarsening of Unstructured Grid with Automatic Differentiation. Geophysical Proceedings of Machine Learning Research, 235. [https://arxiv.org/abs/2507.18297](https://arxiv.org/abs/2507.18297)
 

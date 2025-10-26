@@ -105,7 +105,7 @@ def sinusoidal_source(x, y, t, spatial=True):
     if isinstance(t, (int, float)):
         t = torch.tensor(t, dtype=x.dtype, device=x.device)
     if spatial:
-        return torch.sin(2*np.pi * t) * torch.cos(2*np.pi * x) * torch.cos(2*np.pi * y)
+        return torch.exp(- t) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
         
     else:
         return torch.sin(torch.pi * t).expand_as(x)

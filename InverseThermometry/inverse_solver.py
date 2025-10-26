@@ -17,16 +17,16 @@ import torch.nn as nn
 #    fall back to adding the current dir to sys.path and do absolute imports.
 try:
     from .heat_solver import solve_heat_equation, compute_stable_timestep
-    from .utils import create_conductivity_field, sinusoidal_source
+    from .utils import create_conductivity_field
 except ImportError:  # no parent package when run as a script
     import sys
     sys.path.append(os.path.dirname(__file__))
     from heat_solver import solve_heat_equation, compute_stable_timestep
-    from utils import create_conductivity_field, sinusoidal_source
+    from utils import create_conductivity_field
 
 
 
-def generate_boundary_dataset(M, T, sigmax=None, device='cpu', save_path='InverseThermometry/data/boundary_dataset.npz'):
+def generate_boundary_dataset(M, T, source_func, sigmax=None, device='cpu', save_path='InverseThermometry/data/boundary_dataset.npz'):
     """
     Generate boundary temperature dataset with 5% uniform multiplicative noise.
     - Conductivity: linear sigma(x,y)=1+x+y
@@ -49,12 +49,12 @@ def generate_boundary_dataset(M, T, sigmax=None, device='cpu', save_path='Invers
     sigma = create_conductivity_field(M, 'linear', device=device)
 
     if sigmax is None:
-        _, u_hist = solve_heat_equation(sigma, sinusoidal_source, M, T, n_steps=None, device=device)
+        _, u_hist = solve_heat_equation(sigma, source_func, M, T, n_steps=None, device=device)
     else:
         sigmax = max(torch.max(sigma).item(), sigmax)
         tau_max = compute_stable_timestep(sigmax, h)
         n_steps = int(T / tau_max) + 1
-        _, u_hist = solve_heat_equation(sigma, sinusoidal_source, M, T, n_steps=n_steps, device=device)
+        _, u_hist = solve_heat_equation(sigma, source_func, M, T, n_steps=n_steps, device=device)
 
     # Extract boundary temperatures across time → shape [K, m]
     U = u_hist[:, mask]
@@ -88,6 +88,7 @@ def _boundary_mask(M, device):
 
 def optimize_conductivity_from_dataset(
     dataset_path: str,
+    source_func,
     num_iters: int = 200,
     lr: float = 1e-1,
     alpha: float = 1e-1,
@@ -135,8 +136,9 @@ def optimize_conductivity_from_dataset(
     optimizer = torch.optim.Adam([sigma_param], lr=lr)
 
     mask = _boundary_mask(M, device)
-    loss_history = []
-
+    total_loss_history = []
+    data_loss_history = []
+    reg_loss_history = []
     it = -1
     try:
         for it in range(num_iters):
@@ -145,7 +147,7 @@ def optimize_conductivity_from_dataset(
             sigma = sigma_min + (sigma_max - sigma_min) * torch.sigmoid(sigma_param)
 
             # Forward solve on the same time grid as the dataset
-            _, u_hist = solve_heat_equation(sigma, sinusoidal_source, M, T, n_steps=n_steps, device=device)
+            _, u_hist = solve_heat_equation(sigma, source_func, M, T, n_steps=n_steps, device=device)
             U_pred = u_hist[:, mask]  # [K, m]
 
             # Data misfit weighted by cell area (h) and timestep (τ)
@@ -159,14 +161,16 @@ def optimize_conductivity_from_dataset(
             # print(f"grad norm: {sigma_param.grad.norm().item():.6e}")
             optimizer.step()
 
-            loss_history.append(float(loss.detach().cpu()))
+            total_loss_history.append(float(loss.detach().cpu()))
+            data_loss_history.append(float(data_term.detach().cpu()))
+            reg_loss_history.append(float(reg_term.detach().cpu()))
             if (it + 1) % max(1, num_iters // 10) == 0:
                 print(f"Iter {it+1}/{num_iters}  loss={loss.item():.6e}  data={data_term.item():.6e}  reg={reg_term.item():.6e}")
     except KeyboardInterrupt:
         print(f"\nOptimization interrupted at iter {it+1}. Returning current estimate.")
 
     sigma_est = (sigma_min + (sigma_max - sigma_min) * torch.sigmoid(sigma_param)).detach()
-    return sigma_est, loss_history
+    return sigma_est, total_loss_history, data_loss_history, reg_loss_history
 
 
 
@@ -183,14 +187,32 @@ def run_training(
     sigma_max: float = 3.0,
     outdir: str = "InverseThermometry/results",
 ):
+    
+
+        
+    def sinusoidal_source(x, y, t, spatial=True):
+        """
+        Sinusoidal-in-time source. If spatial=True, modulate by cos(πx)cos(πy)
+        to avoid spatial uniformity (which would make the solution independent of σ
+        under Neumann BCs). Returns an [M,M] tensor matching x/y.
+        """
+        if isinstance(t, (int, float)):
+            t = torch.tensor(t, dtype=x.dtype, device=x.device)
+        if spatial:
+            return torch.exp(- t) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
+            
+        else:
+            return torch.sin(torch.pi * t).expand_as(x)
+
     # Ensure the dataset directory exists
     os.makedirs(os.path.dirname(dataset), exist_ok=True)
     # Generate boundary dataset
-    generate_boundary_dataset(M, T, sigmax=sigma_max, device=device, save_path=dataset)
+    generate_boundary_dataset(M, T, source_func=sinusoidal_source, sigmax=sigma_max, device=device, save_path=dataset)
 
     print("Starting optimization...")
-    sigma_est, loss_hist = optimize_conductivity_from_dataset(
+    sigma_est, total_loss_history, data_loss_history, reg_loss_history = optimize_conductivity_from_dataset(
         dataset_path=dataset,
+        source_func=sinusoidal_source,
         num_iters=iters,
         lr=lr,
         alpha=alpha,
@@ -203,13 +225,15 @@ def run_training(
     # Save artifacts for post-analysis/visualization
     os.makedirs(outdir, exist_ok=True)
     np.save(os.path.join(outdir, "sigma_est.npy"), sigma_est.cpu().numpy())
-    np.save(os.path.join(outdir, "loss_history.npy"), np.array(loss_hist))
+    np.save(os.path.join(outdir, "total_loss_history.npy"), np.array(total_loss_history))
+    np.save(os.path.join(outdir, "data_loss_history.npy"), np.array(data_loss_history))
+    np.save(os.path.join(outdir, "reg_loss_history.npy"), np.array(reg_loss_history))
     print(f"Saved sigma_est and loss history to {outdir}")
 
 
 def main():
     # Simple entrypoint with defaults; call run_training(...) directly to customize
-    run_training(sigma_max=5.0)
+    run_training(sigma_max=5.0, alpha=1e-3)
 
 
 if __name__ == "__main__":
