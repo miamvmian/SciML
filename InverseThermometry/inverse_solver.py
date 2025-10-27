@@ -26,7 +26,7 @@ except ImportError:  # no parent package when run as a script
 
 
 
-def generate_boundary_dataset(M, T, source_func, sigmax=None, device='cpu', save_path='InverseThermometry/data/boundary_dataset.npz'):
+def generate_boundary_dataset(M, T, source_func, sigma,sigmax=None, device='cpu', save_path='InverseThermometry/data/boundary_dataset.npz'):
     """
     Generate boundary temperature dataset with 5% uniform multiplicative noise.
     - Conductivity: linear sigma(x,y)=1+x+y
@@ -45,8 +45,6 @@ def generate_boundary_dataset(M, T, source_func, sigmax=None, device='cpu', save
     # Record boundary coordinates in mask traversal order (row-major)
     coords = torch.stack([X[mask], Y[mask]], dim=-1)
 
-    # True conductivity used to create synthetic data
-    sigma = create_conductivity_field(M, 'linear', device=device)
 
     if sigmax is None:
         _, u_hist = solve_heat_equation(sigma, source_func, M, T, n_steps=None, device=device)
@@ -170,7 +168,7 @@ def optimize_conductivity_from_dataset(
         print(f"\nOptimization interrupted at iter {it+1}. Returning current estimate.")
 
     sigma_est = (sigma_min + (sigma_max - sigma_min) * torch.sigmoid(sigma_param)).detach()
-    return sigma_est, total_loss_history, data_loss_history, reg_loss_history
+    return sigma_est, U_pred, total_loss_history, data_loss_history, reg_loss_history
 
 
 
@@ -187,8 +185,6 @@ def run_training(
     sigma_max: float = 3.0,
     outdir: str = "InverseThermometry/results",
 ):
-    
-
         
     def sinusoidal_source(x, y, t, spatial=True):
         """
@@ -199,18 +195,21 @@ def run_training(
         if isinstance(t, (int, float)):
             t = torch.tensor(t, dtype=x.dtype, device=x.device)
         if spatial:
-            return torch.exp(- t) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
+            return torch.exp(4*t) * torch.cos(np.pi * x) * torch.cos(np.pi * y)
             
         else:
-            return torch.sin(torch.pi * t).expand_as(x)
+            return torch.sin(10*torch.pi * t).expand_as(x)
 
     # Ensure the dataset directory exists
     os.makedirs(os.path.dirname(dataset), exist_ok=True)
     # Generate boundary dataset
-    generate_boundary_dataset(M, T, source_func=sinusoidal_source, sigmax=sigma_max, device=device, save_path=dataset)
+
+    # True conductivity used to create synthetic data
+    sigma = create_conductivity_field(M, 'linear', device=device)
+    generate_boundary_dataset(M, T, sigma=sigma, source_func=sinusoidal_source, sigmax=sigma_max, device=device, save_path=dataset)
 
     print("Starting optimization...")
-    sigma_est, total_loss_history, data_loss_history, reg_loss_history = optimize_conductivity_from_dataset(
+    sigma_est, U_pred,total_loss_history, data_loss_history, reg_loss_history = optimize_conductivity_from_dataset(
         dataset_path=dataset,
         source_func=sinusoidal_source,
         num_iters=iters,
@@ -221,9 +220,10 @@ def run_training(
         sigma_max=sigma_max,
         device=device,
     )
-
+    
     # Save artifacts for post-analysis/visualization
     os.makedirs(outdir, exist_ok=True)
+    np.save(os.path.join(outdir, "U_pred.npy"), U_pred.detach().numpy())
     np.save(os.path.join(outdir, "sigma_est.npy"), sigma_est.cpu().numpy())
     np.save(os.path.join(outdir, "total_loss_history.npy"), np.array(total_loss_history))
     np.save(os.path.join(outdir, "data_loss_history.npy"), np.array(data_loss_history))
