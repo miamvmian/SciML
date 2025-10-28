@@ -482,7 +482,7 @@ For questions, issues, or contributions:
 
 ## Acknowledgments
 
-This implementation was developed as part of a scientific machine learning course project at Skoltech, combining classical numerical methods with modern automatic differentiation frameworks.
+This implementation was developed as part of the course project for *Technologies of Science-Informed Machine Learning*, taught by Alexander Ryabov, Nikolay Yavich, and Vladimir Vanovskiy at the Applied AI Institute, Skoltech. The key feature is to integrate classical numerical methods with modern automatic differentiation frameworks, enabling efficient and accurate computation of derivatives within established scientific algorithms.
 
 ---
 
